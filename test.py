@@ -118,9 +118,8 @@ threshold_value = st.number_input("Unified Threshold (ng/mL)", step=0.01, format
 if st.button("Classify Infection"):
     result = classify_infection(biomarker, threshold_value, stats_dict)
 
-    st.markdown(f"**Classification Range Used: {result['Classification_Method']}**")
-
     st.subheader("🔍 Results")
+    st.markdown(f"**Classification Range Used: {result['Classification_Method']}**")
     if result['Total_Matches'] == 0:
         st.warning("No matching infection found.")
     else:
@@ -129,4 +128,5 @@ if st.button("Classify Infection"):
 
     fig = plot_classification_ranges(biomarker, threshold_value, stats_dict, result)
     st.pyplot(fig, clear_figure=True)
+
 
