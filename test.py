@@ -215,7 +215,16 @@ with col1:
     selected_biomarker = st.selectbox("Select Biomarker", [""] + available_biomarkers, key="biomarker_select")
 
 with col2:
-    threshold_input = st.number_input("Threshold (ng/mL)", min_value=0.0, step=0.01, format="%.4f", key="threshold_input")
+    # Use placeholder and None as default to keep field empty
+    threshold_input = st.number_input(
+        "Threshold (ng/mL)", 
+        min_value=0.0, 
+        value=None,  # Empty by default
+        step=0.01, 
+        format="%.4f", 
+        placeholder="Enter threshold value...",
+        key="threshold_input"
+    )
 
 with col3:
     st.write("")  # Spacer
@@ -223,12 +232,15 @@ with col3:
     add_button = st.button("➕ Add", use_container_width=True)
 
 # Add biomarker to session state
-if add_button and selected_biomarker:
+if add_button and selected_biomarker and threshold_input is not None:
     if selected_biomarker not in st.session_state.biomarker_thresholds:
         st.session_state.biomarker_thresholds[selected_biomarker] = threshold_input
+        # Clear the inputs by rerunning
         st.rerun()
     else:
         st.warning(f"{selected_biomarker} is already added!")
+elif add_button and threshold_input is None:
+    st.warning("Please enter a threshold value!")
 
 # Display currently added biomarkers
 if st.session_state.biomarker_thresholds:
@@ -270,7 +282,7 @@ if st.session_state.biomarker_thresholds:
         
         num_biomarkers = len(st.session_state.biomarker_thresholds)
         
-        # Single biomarker - use old logic
+        # Single biomarker - use old logic BUT with 2-column layout
         if num_biomarkers == 1:
             biomarker = list(st.session_state.biomarker_thresholds.keys())[0]
             threshold_value = st.session_state.biomarker_thresholds[biomarker]
@@ -279,25 +291,35 @@ if st.session_state.biomarker_thresholds:
             
             result = classify_infection(biomarker, threshold_value, stats_dict, verbose=False)
             
-            st.markdown(f"**Biomarker:** {biomarker}")
-            st.markdown(f"**Threshold:** {threshold_value} ng/mL")
-            st.markdown(f"**Classification Method:** {result['Classification_Method']}")
+            # Use 2-column layout even for single biomarker
+            col1, col2 = st.columns(2)
             
-            if result['Total_Matches'] == 0:
-                st.warning("⚠️ No matching infection found.")
-            else:
-                st.success(f"✅ Found {result['Total_Matches']} matching infection(s)")
-                
-                # Display matches
-                st.markdown("#### Infection Matches:")
-                for i, match in enumerate(result['Matches'], 1):
-                    st.markdown(f"{i}. **{match['Infection']}** — {match['Confidence']:.2f}% confidence")
+            with col1:
+                # Create a styled container
+                with st.container(border=True):
+                    st.markdown(f"### 🧪 {biomarker}")
+                    st.markdown(f"**Threshold:** {threshold_value} ng/mL")
+                    st.markdown(f"**Classification Method:** {result['Classification_Method']}")
+                    
+                    if result['Total_Matches'] == 0:
+                        st.warning("⚠️ No matching infection found.")
+                    else:
+                        st.success(f"✅ Found {result['Total_Matches']} matching infection(s)")
+                        
+                        # Display matches
+                        st.markdown("#### Infection Matches:")
+                        for i, match in enumerate(result['Matches'], 1):
+                            st.markdown(f"{i}. **{match['Infection']}** — {match['Confidence']:.2f}% confidence")
+                    
+                    # Plot
+                    st.markdown("---")
+                    st.markdown("#### Visualization")
+                    fig = plot_classification_ranges(biomarker, threshold_value, stats_dict, result)
+                    st.pyplot(fig, clear_figure=True)
             
-            # Plot
-            st.markdown("---")
-            st.markdown("#### Visualization")
-            fig = plot_classification_ranges(biomarker, threshold_value, stats_dict, result)
-            st.pyplot(fig, clear_figure=True)
+            with col2:
+                # Empty column for balanced layout
+                st.write("")
         
         # Multiple biomarkers - use new multi-biomarker logic
         else:
