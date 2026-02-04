@@ -2,12 +2,88 @@ import streamlit as st
 import pickle
 import matplotlib.pyplot as plt
 import numpy as np
+import hashlib
+import os
+
+def load_password_hash():
+    try:
+        with open('passkey.pwd', 'r') as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        st.error("Password file not found! Please generate 'passkey.pwd' first.")
+        st.stop()
+
+def verify_password(entered_password, stored_hash):
+    entered_hash = hashlib.sha256(entered_password.encode()).hexdigest()
+    return entered_hash == stored_hash
+
+def check_authentication():
+    if 'authenticated' not in st.session_state:
+        st.session_state.authenticated = False
+    if st.session_state.authenticated:
+        return True
+    st.markdown(
+        """
+        <style>
+        .login-container {
+            max-width: 400px;
+            margin: 100px auto;
+            padding: 40px;
+            background-color: #f0f2f6;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        </style>
+        """, 
+        unsafe_allow_html=True)
+    
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    with col2:
+        st.markdown("# 🔒 Authentication")
+        st.markdown("### Biomarker Infection Classifier")
+        st.markdown("---")
+        password = st.text_input("Enter Password", type="password", key="login_password")
+        col_a, col_b = st.columns(2)
+        with col_a:
+            login_button = st.button("🔓 Login", use_container_width=True, type="primary")
+        with col_b:
+            if st.button("❓ Help", use_container_width=True):
+                st.info("Please contact the administrator for access credentials.")
+        if login_button:
+            if password:
+                stored_hash = load_password_hash()
+                if verify_password(password, stored_hash):
+                    st.session_state.authenticated = True
+                    st.success("✅ Login successful!")
+                    st.rerun()
+                else:
+                    st.error("❌ Incorrect password. Please try again.")
+            else:
+                st.warning("⚠️ Please enter a password.")
+    
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    st.markdown("---")
+    st.markdown("<center><small>🔐 Secure Access Required</small></center>", unsafe_allow_html=True)
+    
+    return False
+
+if not check_authentication():
+    st.stop()
+with st.sidebar:
+    st.markdown("### 👤 User Session")
+    st.success("✅ Authenticated")
+    if st.button("🚪 Logout", use_container_width=True):
+        st.session_state.authenticated = False
+        st.rerun()
+    st.markdown("---")
 
 @st.cache_resource
 def load_statistics():
     with open("biomarker_statistics.pkl", "rb") as f:
         return pickle.load(f)
-
 stats_dict = load_statistics()
 biomarkers = sorted(stats_dict.keys())
 
@@ -436,3 +512,4 @@ else:
 # Footer
 st.markdown("---")
 st.markdown("*Powered by Bayesian Probability & Statistical Range Analysis*")
+
