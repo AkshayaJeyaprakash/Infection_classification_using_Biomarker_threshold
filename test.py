@@ -198,6 +198,10 @@ def plot_classification_ranges(biomarker, threshold_value, stats_dict, classific
 if 'biomarker_thresholds' not in st.session_state:
     st.session_state.biomarker_thresholds = {}
 
+# Initialize counter for resetting input widgets
+if 'input_counter' not in st.session_state:
+    st.session_state.input_counter = 0
+
 # Streamlit UI
 st.set_page_config(page_title="Biomarker Infection Classifier", layout="wide")
 st.title("🧬 Biomarker-based Infection Classification")
@@ -212,10 +216,15 @@ col1, col2, col3 = st.columns([3, 2, 1])
 with col1:
     # Filter out already added biomarkers
     available_biomarkers = [b for b in biomarkers if b not in st.session_state.biomarker_thresholds]
-    selected_biomarker = st.selectbox("Select Biomarker", [""] + available_biomarkers, key="biomarker_select")
+    selected_biomarker = st.selectbox(
+        "Select Biomarker", 
+        [""] + available_biomarkers, 
+        key=f"biomarker_select_{st.session_state.input_counter}"
+    )
 
 with col2:
     # Use placeholder and None as default to keep field empty
+    # Key changes with counter to force reset
     threshold_input = st.number_input(
         "Threshold (ng/mL)", 
         min_value=0.0, 
@@ -223,7 +232,7 @@ with col2:
         step=0.01, 
         format="%.4f", 
         placeholder="Enter threshold value...",
-        key="threshold_input"
+        key=f"threshold_input_{st.session_state.input_counter}"
     )
 
 with col3:
@@ -235,7 +244,8 @@ with col3:
 if add_button and selected_biomarker and threshold_input is not None:
     if selected_biomarker not in st.session_state.biomarker_thresholds:
         st.session_state.biomarker_thresholds[selected_biomarker] = threshold_input
-        # Clear the inputs by rerunning
+        # Increment counter to reset input widgets with new keys
+        st.session_state.input_counter += 1
         st.rerun()
     else:
         st.warning(f"{selected_biomarker} is already added!")
