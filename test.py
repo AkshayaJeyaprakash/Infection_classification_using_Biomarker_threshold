@@ -111,7 +111,7 @@ def classify_infection(biomarker, threshold_value, stats_dict, verbose=True):
     if matches_std_range:
         return {
             'Biomarker': biomarker,
-            'Threshold': threshold_value,
+            'Lab reading': threshold_value,
             'Matches': compute_confidence(matches_std_range),
             'Classification_Method': 'Mean ± Std Range',
             'Total_Matches': len(matches_std_range)
@@ -254,9 +254,9 @@ def plot_classification_ranges(biomarker, threshold_value, stats_dict, classific
             ax.scatter([row['Mean']], [i], color=color, edgecolors='black', s=200, alpha=alpha)
             ax.text(low - (high-low)*0.05, i, inf, ha='right', va='center', fontsize=9)
 
-        ax.axvline(threshold_value, linestyle='--', linewidth=2, color='red', label=f'Threshold: {threshold_value}')
+        ax.axvline(threshold_value, linestyle='--', linewidth=2, color='red', label=f'Lab reading: {threshold_value}')
         ax.set_title(f"{mode} Range", fontsize=11, fontweight='bold')
-        ax.set_xlabel('Threshold (ng/mL)', fontsize=10)
+        ax.set_xlabel('Lab reading (ng/mL)', fontsize=10)
         ax.set_yticks([])
         ax.grid(True, axis='x', linestyle='--', alpha=0.3)
         ax.legend(fontsize=8)
@@ -288,12 +288,12 @@ with col1:
 
 with col2:
     threshold_input = st.number_input(
-        "Threshold (ng/mL)", 
+        "Lab reading (ng/mL)", 
         min_value=0.0, 
         value=None,
         step=0.01, 
         format="%.4f", 
-        placeholder="Enter threshold value...",
+        placeholder="Enter lab reading value...",
         key=f"threshold_input_{st.session_state.input_counter}"
     )
 
@@ -357,7 +357,7 @@ if st.session_state.biomarker_thresholds:
             with col1:
                 with st.container(border=True):
                     st.markdown(f"### 🧪 {biomarker}")
-                    st.markdown(f"**Threshold:** {threshold_value} ng/mL")
+                    st.markdown(f"**Lab reading:** {threshold_value} ng/mL")
                     st.markdown(f"**Classification Method:** {result['Classification_Method']}")
                     
                     if result['Total_Matches'] == 0:
@@ -391,7 +391,7 @@ if st.session_state.biomarker_thresholds:
                         with col:
                             with st.container(border=True):
                                 st.markdown(f"### {biomarker}")
-                                st.markdown(f"**Threshold:** {threshold_value} ng/mL")
+                                st.markdown(f"**Lab reading:** {threshold_value} ng/mL")
                                 result = classify_infection(biomarker, threshold_value, stats_dict, verbose=False)
                                 individual_results[biomarker] = result
                                 st.markdown(f"**Method:** {result['Classification_Method']}")
@@ -460,6 +460,7 @@ else:
 # Footer
 st.markdown("---")
 st.markdown("*Powered by ASU*")
+
 
 
 
