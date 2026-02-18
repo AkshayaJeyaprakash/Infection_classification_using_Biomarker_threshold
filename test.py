@@ -20,15 +20,6 @@ def load_system_prompt():
         st.error("❌ prompt.pmt file not found!")
         return "You are a helpful medical AI assistant specializing in biomarker analysis and infection classification."
 
-def log_error(error_message):
-    """Log errors to error.log file"""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with open('error.log', 'a', encoding='utf-8') as f:
-        f.write(f"\n{'='*80}\n")
-        f.write(f"[{timestamp}] ERROR:\n")
-        f.write(f"{error_message}\n")
-        f.write(f"{'='*80}\n")
-
 def initialize_gemini():
     """Initialize Gemini API with API key from environment variable"""
     api_key = os.getenv('GEMINI_API_KEY')
@@ -360,8 +351,14 @@ def get_llm_response(user_message, chat_history):
         return response.text
         
     except Exception as e:
-        error_msg = f"Gemini API Error: {str(e)}\nUser Message: {user_message}"
-        log_error(error_msg)
+        print("\n" + "="*80)
+        print("🔴 GEMINI API ERROR")
+        print("="*80)
+        print(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"Error Type: {type(e).__name__}")
+        print(f"Error Message: {str(e)}")
+        print(f"User Message: {user_message}")
+        print("="*80 + "\n")
         return "⚠️ System Error: Unable to process your request at this time. Please try again later or contact support."
 
 # ============================================================================
@@ -804,4 +801,5 @@ elif st.session_state.current_page == "LLM-Aided":
     
     st.markdown("---")
     st.markdown("*Powered by ASU*")
+
 
