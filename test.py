@@ -4,6 +4,43 @@ import matplotlib.pyplot as plt
 import numpy as np
 import hashlib
 import os
+import google.generativeai as genai
+from datetime import datetime
+
+# ============================================================================
+# GEMINI API CONFIGURATION
+# ============================================================================
+
+def load_system_prompt():
+    """Load system prompt from prompt.pmt file"""
+    try:
+        with open('prompt.pmt', 'r', encoding='utf-8') as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        st.error("❌ prompt.pmt file not found!")
+        return "You are a helpful medical AI assistant specializing in biomarker analysis and infection classification."
+
+def log_error(error_message):
+    """Log errors to error.log file"""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with open('error.log', 'a', encoding='utf-8') as f:
+        f.write(f"\n{'='*80}\n")
+        f.write(f"[{timestamp}] ERROR:\n")
+        f.write(f"{error_message}\n")
+        f.write(f"{'='*80}\n")
+
+def initialize_gemini():
+    """Initialize Gemini API with API key from environment variable"""
+    api_key = os.getenv('GEMINI_API_KEY')
+    if not api_key:
+        st.error("❌ GEMINI_API_KEY environment variable not set!")
+        st.stop()
+    
+    genai.configure(api_key=api_key)
+    return genai.GenerativeModel(
+        model_name='gemini-2.5-flash-lite',
+        system_instruction=load_system_prompt()
+    )
 
 # ============================================================================
 # AUTHENTICATION SYSTEM
@@ -65,7 +102,7 @@ def check_authentication():
                 stored_hash = load_password_hash()
                 if verify_password(password, stored_hash):
                     st.session_state.authenticated = True
-                    st.session_state.current_page = "Home"  # Start at home
+                    st.session_state.current_page = "Home"
                     st.success("✅ Login successful!")
                     st.rerun()
                 else:
@@ -252,7 +289,6 @@ def plot_classification_ranges(biomarker, threshold_value, stats_dict, classific
     # Filter out infections with less than 5 data points
     stats_df = stats_df[stats_df['Count'] >= 5].copy()
     
-    # If no infections left after filtering, show message
     if len(stats_df) == 0:
         fig, ax = plt.subplots(figsize=(8, 6))
         ax.text(0.5, 0.5, 'No infections with sufficient data points (≥5) to display', 
@@ -284,7 +320,6 @@ def plot_classification_ranges(biomarker, threshold_value, stats_dict, classific
             ax.plot([low, high], [i, i], color=color, linewidth=lw, alpha=alpha)
             ax.scatter([row['Mean']], [i], color=color, edgecolors='black', s=200, alpha=alpha)
             
-            # Add count annotation
             label_text = f"{inf} (n={int(row['Count'])})"
             ax.text(low - (high-low)*0.05, i, label_text, ha='right', va='center', fontsize=9)
 
@@ -299,6 +334,42 @@ def plot_classification_ranges(biomarker, threshold_value, stats_dict, classific
     return fig
 
 # ============================================================================
+# LLM FUNCTIONS
+# ============================================================================
+
+def get_llm_response(user_message, chat_history):
+    """Get response from Gemini API"""
+    try:
+        model = initialize_gemini()
+        
+        # Build conversation history for context
+        messages = []
+        for msg in chat_history:
+            messages.append({
+                'role': msg['role'],
+                'parts': [msg['content']]
+            })
+        
+        # Add current message
+        messages.append({
+            'role': 'user',
+            'parts': [user_message]
+        })
+        
+        # Start chat with history
+        chat = model.start_chat(history=messages[:-1])
+        
+        # Send message and get response
+        response = chat.send_message(user_message)
+        
+        return response.text
+        
+    except Exception as e:
+        error_msg = f"Gemini API Error: {str(e)}\nUser Message: {user_message}"
+        log_error(error_msg)
+        return "⚠️ System Error: Unable to process your request at this time. Please try again later or contact support."
+
+# ============================================================================
 # SESSION STATE INITIALIZATION
 # ============================================================================
 
@@ -310,6 +381,9 @@ if 'biomarker_thresholds' not in st.session_state:
 
 if 'input_counter' not in st.session_state:
     st.session_state.input_counter = 0
+
+if 'llm_chat_history' not in st.session_state:
+    st.session_state.llm_chat_history = []
 
 if 'llm_submitted' not in st.session_state:
     st.session_state.llm_submitted = False
@@ -329,12 +403,13 @@ with st.sidebar:
     st.success("✅ Authenticated")
     if st.button("🚪 Logout", use_container_width=True):
         st.session_state.authenticated = False
+        st.session_state.llm_chat_history = []  # Clear chat on logout
+        st.session_state.biomarker_thresholds = {}
         st.rerun()
     
     st.markdown("---")
     st.markdown("### 📑 Navigation")
     
-    # Navigation buttons
     if st.button("🏠 Home", use_container_width=True, 
                  type="primary" if st.session_state.current_page == "Home" else "secondary"):
         st.session_state.current_page = "Home"
@@ -668,6 +743,16 @@ elif st.session_state.current_page == "LLM-Aided":
         if st.session_state.biomarker_thresholds:
             if st.button("🔬 Classify", type="primary", use_container_width=True, key="llm_classify_btn"):
                 st.session_state.llm_submitted = True
+                
+                # Create initial user message with biomarkers
+                biomarker_text = "\n".join([f"{bio}:{val}" for bio, val in st.session_state.biomarker_thresholds.items()])
+                
+                # Add to chat history
+                st.session_state.llm_chat_history.append({
+                    'role': 'user',
+                    'content': biomarker_text
+                })
+                
                 st.rerun()
         else:
             st.info("👆 Please add at least one biomarker to begin classification.")
@@ -676,20 +761,48 @@ elif st.session_state.current_page == "LLM-Aided":
     else:
         st.subheader("💬 Classification Analysis")
         
-        # User message showing all biomarkers
-        with st.chat_message("user"):
-            biomarker_text = "\n".join([f"{bio}:{val}" for bio, val in st.session_state.biomarker_thresholds.items()])
-            st.markdown(f"```\n{biomarker_text}\n```")
+        # Display chat history
+        for idx, message in enumerate(st.session_state.llm_chat_history):
+            if message['role'] == 'user':
+                with st.chat_message("user"):
+                    st.markdown(f"```\n{message['content']}\n```")
+            else:
+                with st.chat_message("assistant"):
+                    st.markdown(message['content'])
         
-        # Placeholder for LLM response (to be implemented later)
-        with st.chat_message("assistant"):
-            st.markdown("🔄 Processing your request...")
-            st.info("LLM response will appear here. (Coming soon)")
+        # If last message was user, get LLM response
+        if st.session_state.llm_chat_history and st.session_state.llm_chat_history[-1]['role'] == 'user':
+            with st.chat_message("assistant"):
+                with st.spinner("🔄 Processing your request..."):
+                    response = get_llm_response(
+                        st.session_state.llm_chat_history[-1]['content'],
+                        st.session_state.llm_chat_history[:-1]
+                    )
+                    st.markdown(response)
+            
+            # Add response to history
+            st.session_state.llm_chat_history.append({
+                'role': 'assistant',
+                'content': response
+            })
+            st.rerun()
+        
+        # Chat input for follow-up questions
+        user_input = st.chat_input("Ask a follow-up question...")
+        
+        if user_input:
+            # Add user message to history
+            st.session_state.llm_chat_history.append({
+                'role': 'user',
+                'content': user_input
+            })
+            st.rerun()
         
         # Reset button
         st.markdown("---")
         if st.button("🔄 New Classification", use_container_width=True):
             st.session_state.llm_submitted = False
+            st.session_state.llm_chat_history = []
             st.session_state.biomarker_thresholds = {}
             st.session_state.input_counter += 1
             st.rerun()
