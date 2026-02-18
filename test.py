@@ -232,7 +232,7 @@ def classify_infection_bayesian_geometric(biomarker_thresholds, stats_dict, verb
 def plot_classification_ranges(biomarker, threshold_value, stats_dict, classification_result):
     stats_df = stats_dict[biomarker]
     
-    stats_df = stats_df[stats_df['Count'] >= 5].copy()
+    stats_df = stats_df[stats_df['Count'] >= 3].copy()
     if len(stats_df) == 0:
         fig, ax = plt.subplots(figsize=(8, 6))
         ax.text(0.5, 0.5, 'No infections with sufficient data points (≥5) to display', 
@@ -471,6 +471,7 @@ else:
 # Footer
 st.markdown("---")
 st.markdown("*Powered by ASU*")
+
 
 
 
