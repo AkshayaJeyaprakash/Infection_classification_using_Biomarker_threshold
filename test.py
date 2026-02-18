@@ -81,13 +81,8 @@ def check_authentication():
     
     col1, col2, col3 = st.columns([1, 2, 1])
     
-    with col2:
-        st.markdown("# 🔒 Authentication")
-        st.markdown("### Biomarker Infection Classifier")
-        st.markdown("---")
-        
+    with col2:        
         password = st.text_input("Enter Password", type="password", key="login_password")
-        
         col_a, col_b = st.columns(2)
         
         with col_a:
@@ -809,3 +804,4 @@ elif st.session_state.current_page == "LLM-Aided":
     
     st.markdown("---")
     st.markdown("*Powered by ASU*")
+
