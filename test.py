@@ -8,6 +8,35 @@ import google.generativeai as genai
 from datetime import datetime
 
 # ============================================================================
+# UNIT CONVERSION
+# ============================================================================
+
+# Conversion factors to ng/mL (base unit)
+CONVERSION_FACTORS = {
+    'ng/mL': 1,
+    'pg/mL': 0.001,
+    'μg/mL': 1000,
+    'mg/mL': 1000000,
+    'ng/L': 0.001,
+    'μg/L': 1,
+    'mg/L': 1000,
+    'ng/dL': 0.01,
+    'mg/dL': 10000,
+    'ng/μL': 1000,
+    'g/mL': 1000000000.0
+}
+
+UNITS_LIST = list(CONVERSION_FACTORS.keys())
+
+def convert_to_ng_ml(value, unit):
+    """Convert value from given unit to ng/mL"""
+    return value * CONVERSION_FACTORS.get(unit, 1)
+
+def format_biomarker_display(biomarker, value, unit):
+    """Format biomarker for display"""
+    return f"{biomarker}: {value} {unit} ({convert_to_ng_ml(value, unit):.4f} ng/mL)"
+
+# ============================================================================
 # GEMINI API CONFIGURATION
 # ============================================================================
 
@@ -198,15 +227,18 @@ def classify_infection_bayesian_geometric(biomarker_thresholds, stats_dict, verb
     successful_biomarkers = []
     individual_results = {}
 
-    for biomarker, threshold_value in biomarker_thresholds.items():
+    for biomarker_data in biomarker_thresholds.values():
+        biomarker = biomarker_data['biomarker']
+        threshold_ng_ml = biomarker_data['value_ng_ml']
+        
         if biomarker not in stats_dict:
             if verbose:
                 st.warning(f"No statistics for {biomarker}, skipping...")
             continue
-        result = classify_infection(biomarker, threshold_value, stats_dict, verbose=False)
+        result = classify_infection(biomarker, threshold_ng_ml, stats_dict, verbose=False)
         if result is None or result['Total_Matches'] == 0:
             if verbose:
-                st.warning(f"No matches found for {biomarker}={threshold_value}, skipping...")
+                st.warning(f"No matches found for {biomarker}={threshold_ng_ml}, skipping...")
             continue
 
         individual_results[biomarker] = result
@@ -395,7 +427,7 @@ with st.sidebar:
     st.success("✅ Authenticated")
     if st.button("🚪 Logout", use_container_width=True):
         st.session_state.authenticated = False
-        st.session_state.llm_chat_history = []  # Clear chat on logout
+        st.session_state.llm_chat_history = []
         st.session_state.biomarker_thresholds = {}
         st.rerun()
     
@@ -416,6 +448,112 @@ with st.sidebar:
                  type="primary" if st.session_state.current_page == "LLM-Aided" else "secondary"):
         st.session_state.current_page = "LLM-Aided"
         st.rerun()
+
+# ============================================================================
+# HELPER FUNCTION FOR BIOMARKER INPUT
+# ============================================================================
+
+def render_biomarker_input(page_prefix=""):
+    """Render biomarker input section with unit support"""
+    col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
+    
+    with col1:
+        available_biomarkers = [b for b in biomarkers if b not in st.session_state.biomarker_thresholds]
+        selected_biomarker = st.selectbox(
+            "Select Biomarker", 
+            [""] + available_biomarkers, 
+            key=f"{page_prefix}biomarker_select_{st.session_state.input_counter}"
+        )
+    
+    with col2:
+        threshold_input = st.number_input(
+            "Lab reading value", 
+            min_value=0.0, 
+            value=None,
+            step=0.01, 
+            format="%.4f", 
+            placeholder="Enter value...",
+            key=f"{page_prefix}threshold_input_{st.session_state.input_counter}"
+        )
+    
+    with col3:
+        selected_unit = st.selectbox(
+            "Unit",
+            UNITS_LIST,
+            key=f"{page_prefix}unit_select_{st.session_state.input_counter}"
+        )
+    
+    with col4:
+        st.write("")
+        st.write("")
+        add_button = st.button("➕ Add", use_container_width=True, key=f"{page_prefix}add_btn")
+    
+    if add_button and selected_biomarker and threshold_input is not None:
+        if selected_biomarker not in st.session_state.biomarker_thresholds:
+            # Store both original and converted values
+            st.session_state.biomarker_thresholds[selected_biomarker] = {
+                'biomarker': selected_biomarker,
+                'value': threshold_input,
+                'unit': selected_unit,
+                'value_ng_ml': convert_to_ng_ml(threshold_input, selected_unit)
+            }
+            st.session_state.input_counter += 1
+            st.rerun()
+        else:
+            st.warning(f"{selected_biomarker} is already added!")
+    elif add_button and threshold_input is None:
+        st.warning("Please enter a value!")
+
+def display_added_biomarkers(page_prefix=""):
+    """Display currently added biomarkers with edit functionality"""
+    if st.session_state.biomarker_thresholds:
+        st.markdown("### Currently Added Biomarkers:")
+        
+        for bio_key in list(st.session_state.biomarker_thresholds.keys()):
+            bio_data = st.session_state.biomarker_thresholds[bio_key]
+            col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
+            
+            with col1:
+                st.write(f"**{bio_data['biomarker']}**")
+            
+            with col2:
+                new_value = st.number_input(
+                    f"Value", 
+                    value=bio_data['value'],
+                    min_value=0.0,
+                    step=0.01,
+                    format="%.4f",
+                    key=f"{page_prefix}edit_val_{bio_key}",
+                    label_visibility="collapsed"
+                )
+            
+            with col3:
+                new_unit = st.selectbox(
+                    "Unit",
+                    UNITS_LIST,
+                    index=UNITS_LIST.index(bio_data['unit']),
+                    key=f"{page_prefix}edit_unit_{bio_key}",
+                    label_visibility="collapsed"
+                )
+            
+            # Update if changed
+            if new_value != bio_data['value'] or new_unit != bio_data['unit']:
+                st.session_state.biomarker_thresholds[bio_key] = {
+                    'biomarker': bio_data['biomarker'],
+                    'value': new_value,
+                    'unit': new_unit,
+                    'value_ng_ml': convert_to_ng_ml(new_value, new_unit)
+                }
+            
+            with col4:
+                if st.button("🗑️", key=f"{page_prefix}remove_{bio_key}", use_container_width=True):
+                    del st.session_state.biomarker_thresholds[bio_key]
+                    st.rerun()
+            
+            # Show converted value
+            st.caption(f"→ {bio_data['value_ng_ml']:.4f} ng/mL")
+        
+        st.write(f"**Total Biomarkers:** {len(st.session_state.biomarker_thresholds)}")
 
 # ============================================================================
 # PAGE ROUTING
@@ -466,71 +604,8 @@ elif st.session_state.current_page == "Statistical":
     st.markdown("---")
     
     st.subheader("Add Biomarkers")
-    
-    col1, col2, col3 = st.columns([3, 2, 1])
-    
-    with col1:
-        available_biomarkers = [b for b in biomarkers if b not in st.session_state.biomarker_thresholds]
-        selected_biomarker = st.selectbox(
-            "Select Biomarker", 
-            [""] + available_biomarkers, 
-            key=f"biomarker_select_{st.session_state.input_counter}"
-        )
-    
-    with col2:
-        threshold_input = st.number_input(
-            "Lab reading (ng/mL)", 
-            min_value=0.0, 
-            value=None,
-            step=0.01, 
-            format="%.4f", 
-            placeholder="Enter lab reading value...",
-            key=f"threshold_input_{st.session_state.input_counter}"
-        )
-    
-    with col3:
-        st.write("")
-        st.write("")
-        add_button = st.button("➕ Add", use_container_width=True)
-    
-    if add_button and selected_biomarker and threshold_input is not None:
-        if selected_biomarker not in st.session_state.biomarker_thresholds:
-            st.session_state.biomarker_thresholds[selected_biomarker] = threshold_input
-            st.session_state.input_counter += 1
-            st.rerun()
-        else:
-            st.warning(f"{selected_biomarker} is already added!")
-    elif add_button and threshold_input is None:
-        st.warning("Please enter a threshold value!")
-    
-    if st.session_state.biomarker_thresholds:
-        st.markdown("### Currently Added Biomarkers:")
-        
-        for biomarker in list(st.session_state.biomarker_thresholds.keys()):
-            col1, col2, col3 = st.columns([3, 2, 1])
-            
-            with col1:
-                st.write(f"**{biomarker}**")
-            
-            with col2:
-                new_value = st.number_input(
-                    f"Value", 
-                    value=st.session_state.biomarker_thresholds[biomarker],
-                    min_value=0.0,
-                    step=0.01,
-                    format="%.4f",
-                    key=f"edit_{biomarker}",
-                    label_visibility="collapsed"
-                )
-                if new_value != st.session_state.biomarker_thresholds[biomarker]:
-                    st.session_state.biomarker_thresholds[biomarker] = new_value
-            
-            with col3:
-                if st.button("🗑️ Remove", key=f"remove_{biomarker}", use_container_width=True):
-                    del st.session_state.biomarker_thresholds[biomarker]
-                    st.rerun()
-        
-        st.write(f"**Total Biomarkers:** {len(st.session_state.biomarker_thresholds)}")
+    render_biomarker_input("stat_")
+    display_added_biomarkers("stat_")
     
     st.markdown("---")
     
@@ -540,18 +615,20 @@ elif st.session_state.current_page == "Statistical":
             num_biomarkers = len(st.session_state.biomarker_thresholds)
             
             if num_biomarkers == 1:
-                biomarker = list(st.session_state.biomarker_thresholds.keys())[0]
-                threshold_value = st.session_state.biomarker_thresholds[biomarker]
+                bio_key = list(st.session_state.biomarker_thresholds.keys())[0]
+                bio_data = st.session_state.biomarker_thresholds[bio_key]
+                biomarker = bio_data['biomarker']
+                threshold_ng_ml = bio_data['value_ng_ml']
                 
                 st.subheader("🔍 Classification Results")
                 
-                result = classify_infection(biomarker, threshold_value, stats_dict, verbose=False)
+                result = classify_infection(biomarker, threshold_ng_ml, stats_dict, verbose=False)
                 col1, col2 = st.columns(2)
                 
                 with col1:
                     with st.container(border=True):
                         st.markdown(f"### 🧪 {biomarker}")
-                        st.markdown(f"**Lab reading:** {threshold_value} ng/mL")
+                        st.markdown(f"**Lab reading:** {bio_data['value']} {bio_data['unit']} ({threshold_ng_ml:.4f} ng/mL)")
                         st.markdown(f"**Classification Method:** {result['Classification_Method']}")
                         
                         if result['Total_Matches'] == 0:
@@ -563,7 +640,7 @@ elif st.session_state.current_page == "Statistical":
                                 st.markdown(f"{i}. **{match['Infection']}** — {match['Confidence']:.2f}% confidence")
                         st.markdown("---")
                         st.markdown("#### Visualization")
-                        fig = plot_classification_ranges(biomarker, threshold_value, stats_dict, result)
+                        fig = plot_classification_ranges(biomarker, threshold_ng_ml, stats_dict, result)
                         st.pyplot(fig, clear_figure=True)
                 
                 with col2:
@@ -580,14 +657,16 @@ elif st.session_state.current_page == "Statistical":
                     for col_idx, col in enumerate(cols):
                         biomarker_idx = idx + col_idx
                         if biomarker_idx < len(biomarker_list):
-                            biomarker = biomarker_list[biomarker_idx]
-                            threshold_value = st.session_state.biomarker_thresholds[biomarker]
+                            bio_key = biomarker_list[biomarker_idx]
+                            bio_data = st.session_state.biomarker_thresholds[bio_key]
+                            biomarker = bio_data['biomarker']
+                            threshold_ng_ml = bio_data['value_ng_ml']
                             
                             with col:
                                 with st.container(border=True):
                                     st.markdown(f"### {biomarker}")
-                                    st.markdown(f"**Lab reading:** {threshold_value} ng/mL")
-                                    result = classify_infection(biomarker, threshold_value, stats_dict, verbose=False)
+                                    st.markdown(f"**Lab reading:** {bio_data['value']} {bio_data['unit']} ({threshold_ng_ml:.4f} ng/mL)")
+                                    result = classify_infection(biomarker, threshold_ng_ml, stats_dict, verbose=False)
                                     individual_results[biomarker] = result
                                     st.markdown(f"**Method:** {result['Classification_Method']}")
                                     
@@ -597,7 +676,7 @@ elif st.session_state.current_page == "Statistical":
                                         st.success(f"{result['Total_Matches']} match(es)")
                                         for i, match in enumerate(result['Matches'][:4], 1):
                                             st.markdown(f"{i}. **{match['Infection']}**: {match['Confidence']:.2f}%")
-                                    fig = plot_classification_ranges(biomarker, threshold_value, stats_dict, result)
+                                    fig = plot_classification_ranges(biomarker, threshold_ng_ml, stats_dict, result)
                                     st.pyplot(fig, clear_figure=True)
                 
                 st.markdown("---")
@@ -661,74 +740,10 @@ elif st.session_state.current_page == "LLM-Aided":
     st.title("🤖 LLM-Aided Classification")
     st.markdown("---")
     
-    # Only show input section if not submitted
     if not st.session_state.llm_submitted:
         st.subheader("Add Biomarkers")
-        
-        col1, col2, col3 = st.columns([3, 2, 1])
-        
-        with col1:
-            available_biomarkers = [b for b in biomarkers if b not in st.session_state.biomarker_thresholds]
-            selected_biomarker = st.selectbox(
-                "Select Biomarker", 
-                [""] + available_biomarkers, 
-                key=f"llm_biomarker_select_{st.session_state.input_counter}"
-            )
-        
-        with col2:
-            threshold_input = st.number_input(
-                "Lab reading (ng/mL)", 
-                min_value=0.0, 
-                value=None,
-                step=0.01, 
-                format="%.4f", 
-                placeholder="Enter lab reading value...",
-                key=f"llm_threshold_input_{st.session_state.input_counter}"
-            )
-        
-        with col3:
-            st.write("")
-            st.write("")
-            add_button = st.button("➕ Add", use_container_width=True, key="llm_add_btn")
-        
-        if add_button and selected_biomarker and threshold_input is not None:
-            if selected_biomarker not in st.session_state.biomarker_thresholds:
-                st.session_state.biomarker_thresholds[selected_biomarker] = threshold_input
-                st.session_state.input_counter += 1
-                st.rerun()
-            else:
-                st.warning(f"{selected_biomarker} is already added!")
-        elif add_button and threshold_input is None:
-            st.warning("Please enter a threshold value!")
-        
-        if st.session_state.biomarker_thresholds:
-            st.markdown("### Currently Added Biomarkers:")
-            
-            for biomarker in list(st.session_state.biomarker_thresholds.keys()):
-                col1, col2, col3 = st.columns([3, 2, 1])
-                
-                with col1:
-                    st.write(f"**{biomarker}**")
-                
-                with col2:
-                    new_value = st.number_input(
-                        f"Value", 
-                        value=st.session_state.biomarker_thresholds[biomarker],
-                        min_value=0.0,
-                        step=0.01,
-                        format="%.4f",
-                        key=f"llm_edit_{biomarker}",
-                        label_visibility="collapsed"
-                    )
-                    if new_value != st.session_state.biomarker_thresholds[biomarker]:
-                        st.session_state.biomarker_thresholds[biomarker] = new_value
-                
-                with col3:
-                    if st.button("🗑️ Remove", key=f"llm_remove_{biomarker}", use_container_width=True):
-                        del st.session_state.biomarker_thresholds[biomarker]
-                        st.rerun()
-            
-            st.write(f"**Total Biomarkers:** {len(st.session_state.biomarker_thresholds)}")
+        render_biomarker_input("llm_")
+        display_added_biomarkers("llm_")
         
         st.markdown("---")
         
@@ -736,10 +751,12 @@ elif st.session_state.current_page == "LLM-Aided":
             if st.button("🔬 Classify", type="primary", use_container_width=True, key="llm_classify_btn"):
                 st.session_state.llm_submitted = True
                 
-                # Create initial user message with biomarkers
-                biomarker_text = "\n".join([f"{bio}:{val}" for bio, val in st.session_state.biomarker_thresholds.items()])
+                # Create initial user message with biomarkers (with units)
+                biomarker_text = "\n".join([
+                    f"{data['biomarker']}: {data['value']} {data['unit']}" 
+                    for data in st.session_state.biomarker_thresholds.values()
+                ])
                 
-                # Add to chat history
                 st.session_state.llm_chat_history.append({
                     'role': 'user',
                     'content': biomarker_text
@@ -749,7 +766,6 @@ elif st.session_state.current_page == "LLM-Aided":
         else:
             st.info("👆 Please add at least one biomarker to begin classification.")
     
-    # Show chat interface after submission
     else:
         st.subheader("💬 Classification Analysis")
         
@@ -772,7 +788,6 @@ elif st.session_state.current_page == "LLM-Aided":
                     )
                     st.markdown(response)
             
-            # Add response to history
             st.session_state.llm_chat_history.append({
                 'role': 'assistant',
                 'content': response
@@ -783,7 +798,6 @@ elif st.session_state.current_page == "LLM-Aided":
         user_input = st.chat_input("Ask a follow-up question...")
         
         if user_input:
-            # Add user message to history
             st.session_state.llm_chat_history.append({
                 'role': 'user',
                 'content': user_input
@@ -801,5 +815,3 @@ elif st.session_state.current_page == "LLM-Aided":
     
     st.markdown("---")
     st.markdown("*Powered by ASU*")
-
-
