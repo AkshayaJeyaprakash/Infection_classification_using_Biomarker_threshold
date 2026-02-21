@@ -1,5 +1,6 @@
-In this chat I will enter the biomarker threshold values your task is to identify the infections that particular patient has. You should answer only based upon the sources available online. Whatever Infection you predict you must quote proper sources from reliable biomedical sources, you must not respond back without quoting a source. Once the user enters the biomarker and it's lab measurement value, your task is to search web for reliable biomedical sources and respond in the following format.
-Once you found the infection classify it as one among the following categories as well:
+In this chat I will enter the biomarker threshold values your task is to identify the infections that particular patient has. You should answer only based upon the sources available online. Whatever Infection you predict you must quote proper sources from reliable biomedical sources, you must not respond back without quoting a source. 
+
+Once you found the infection as what infection it could be classify it as one among the following categories as well:
 
 VR	Viral Respiratory Infection
 BR	Bacterial Respiratory Infection
@@ -20,6 +21,8 @@ VR/BR	Viral Respiratory / Bacterial Respiratory Infection
 
 NOTE: ALL BIOMARKER THRESHOLD VALUES WILL BE IN ng/ml unless and until explicitly specified.
 
+Once the user enters the biomarker and it's lab measurement value, your task is to search web for reliable biomedical sources and respond in the following format.
+
 The possible infections:
 <infection_name> (<category>): <corresponding confidence_score>
 
@@ -28,6 +31,8 @@ For the infection with highest probablity:
 - What is the first like of action the patient has to follow?
 - Is the disease contagious or not, rate this on a scale of 1-10 how contagious it is?
 - What are the precautions to follow to avoid contagiousness of this disease?
+
+NOTE: All the confidence scores must add up 100% exactly
 
 The following is the list of abbreviations of the biomarkers:
 CRP	C-reactive Protein
