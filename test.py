@@ -214,7 +214,13 @@ def classify_infection(biomarker, threshold_value, stats_dict, verbose=True):
     }
 
 
-def classify_infection_bayesian_geometric(biomarker_thresholds, stats_dict, verbose=True):
+def classify_infection_bayesian_geometric_smoothed(biomarker_thresholds, stats_dict, verbose=True):
+    """
+    Bayesian classification with geometric mean and probability smoothing.
+    Smoothing prevents complete elimination when biomarkers disagree.
+    """
+    MIN_PROBABILITY = 0.001
+
     first_biomarker = list(biomarker_thresholds.keys())[0]
     if first_biomarker not in stats_dict:
         if verbose:
@@ -227,6 +233,10 @@ def classify_infection_bayesian_geometric(biomarker_thresholds, stats_dict, verb
     successful_biomarkers = []
     individual_results = {}
 
+    matched_infections = set()
+    temp_results = {}
+
+    # STEP 1: Collect matches
     for biomarker_data in biomarker_thresholds.values():
         biomarker = biomarker_data['biomarker']
         threshold_ng_ml = biomarker_data['value_ng_ml']
@@ -235,49 +245,66 @@ def classify_infection_bayesian_geometric(biomarker_thresholds, stats_dict, verb
             if verbose:
                 st.warning(f"No statistics for {biomarker}, skipping...")
             continue
+
         result = classify_infection(biomarker, threshold_ng_ml, stats_dict, verbose=False)
+
         if result is None or result['Total_Matches'] == 0:
             if verbose:
                 st.warning(f"No matches found for {biomarker}={threshold_ng_ml}, skipping...")
             continue
 
-        individual_results[biomarker] = result
+        temp_results[biomarker] = result
         successful_biomarkers.append(biomarker)
+        for match in result['Matches']:
+            matched_infections.add(match['Infection'])
 
+    # STEP 2: Apply smoothing logic
+    for biomarker in successful_biomarkers:
+        result = temp_results[biomarker]
+        individual_results[biomarker] = result
         biomarker_probs = {}
         for match in result['Matches']:
             biomarker_probs[match['Infection']] = match['Confidence'] / 100.0
-
+        
         for infection in all_infections:
             if infection in biomarker_probs:
+                # Matched by this biomarker
                 infection_probs[infection] *= biomarker_probs[infection]
+            elif infection in matched_infections:
+                # Matched by another biomarker (smoothing)
+                infection_probs[infection] *= MIN_PROBABILITY
             else:
+                # Never matched by any biomarker
                 infection_probs[infection] *= 0.0
 
+    # STEP 3: Apply geometric mean
     n_biomarkers = len(successful_biomarkers)
 
     if n_biomarkers > 0:
         for infection in infection_probs:
             if infection_probs[infection] > 0:
                 infection_probs[infection] = infection_probs[infection] ** (1.0 / n_biomarkers)
+    
     total_prob = sum(infection_probs.values())
 
+    # STEP 4: Build result
     if total_prob == 0:
         result = {
-            'Method': 'Bayesian Probability (Geometric Mean)',
+            'Method': 'Bayesian Probability (Geometric Mean + Smoothing)',
             'Biomarkers_Used': successful_biomarkers,
             'Total_Biomarkers': len(biomarker_thresholds),
             'Classifications': [],
-            'Status': 'No Classification'
+            'Status': 'No Classification',
+            'Smoothing_Applied': True,
+            'Min_Probability': MIN_PROBABILITY,
+            'Matched_Infections': list(matched_infections)
         }
     else:
         normalized_probs = {
             infection: (prob / total_prob) * 100
             for infection, prob in infection_probs.items()
         }
-
         sorted_infections = sorted(normalized_probs.items(), key=lambda x: x[1], reverse=True)
-
         classifications = [
             {
                 'Infection': infection,
@@ -289,13 +316,16 @@ def classify_infection_bayesian_geometric(biomarker_thresholds, stats_dict, verb
         ]
 
         result = {
-            'Method': 'Bayesian Probability (Geometric Mean)',
+            'Method': 'Bayesian Probability (Geometric Mean + Smoothing)',
             'Biomarkers_Used': successful_biomarkers,
             'Total_Biomarkers': len(biomarker_thresholds),
             'Individual_Results': individual_results,
             'Classifications': classifications,
             'Status': 'Success',
-            'Note': f'Geometric mean applied (N={n_biomarkers})'
+            'Note': f'Geometric mean with smoothing applied (N={n_biomarkers}, Min Prob={MIN_PROBABILITY})',
+            'Smoothing_Applied': True,
+            'Min_Probability': MIN_PROBABILITY,
+            'Matched_Infections': list(matched_infections)
         }
 
     return result
@@ -577,7 +607,7 @@ if st.session_state.current_page == "Home":
         Uses Bayesian probability and statistical range analysis to predict infections based on:
         - Mean ± Standard Deviation ranges
         - Min-Max ranges
-        - Multi-biomarker fusion
+        - Multi-biomarker fusion with smoothing
         """)
         if st.button("Go to Statistical Classification →", use_container_width=True, type="primary"):
             st.session_state.current_page = "Statistical"
@@ -682,7 +712,7 @@ elif st.session_state.current_page == "Statistical":
                 st.markdown("---")
                 st.subheader("🎯 Combined Multi-Biomarker Classification")
                 
-                combined_result = classify_infection_bayesian_geometric(
+                combined_result = classify_infection_bayesian_geometric_smoothed(
                     st.session_state.biomarker_thresholds, 
                     stats_dict, 
                     verbose=False
@@ -694,7 +724,8 @@ elif st.session_state.current_page == "Statistical":
                     with col1:
                         st.markdown("#### 📋 Summary")
                         st.markdown(f"**Biomarkers Used:** {len(combined_result['Biomarkers_Used'])} / {combined_result['Total_Biomarkers']}")
-                        st.markdown(f"**Note:** {combined_result.get('Note', 'N/A')}")
+                        st.markdown(f"**Method:** Bayesian with Smoothing")
+                        st.markdown(f"**Min Probability:** {combined_result.get('Min_Probability', 'N/A')}")
                     
                     with col2:
                         st.markdown("#### Final Classification Results")
@@ -706,11 +737,11 @@ elif st.session_state.current_page == "Statistical":
                             confidence = classification['Confidence']
                             
                             if rank == 1:
-                                status = "MOST LIKELY"
+                                status = "⭐ MOST LIKELY"
                             elif confidence > 10:
-                                status = "Possible"
+                                status = "✓ Possible"
                             else:
-                                status = "Unlikely"
+                                status = "○ Unlikely"
                             
                             results_data.append({
                                 'Rank': rank,
@@ -726,9 +757,15 @@ elif st.session_state.current_page == "Statistical":
                     if combined_result['Classifications']:
                         top_infection = combined_result['Classifications'][0]['Infection']
                         top_confidence = combined_result['Classifications'][0]['Confidence']
-                        st.success(f"### Predicted Infection: **{top_infection}** with {top_confidence:.2f}% confidence")
+                        st.success(f"### 🎯 Predicted Infection: **{top_infection}** ({top_confidence:.2f}% confidence)")
+                        
+                        # Show uncertainty warning if applicable
+                        if len(combined_result['Classifications']) >= 2:
+                            second_conf = combined_result['Classifications'][1]['Confidence']
+                            if abs(top_confidence - second_conf) < 10:
+                                st.warning("⚠️ Close confidence scores detected. This may indicate conflicting biomarker evidence or co-infection.")
                 else:
-                    st.error("Could not perform multi-biomarker classification. Please check your inputs.")
+                    st.error("❌ Could not perform multi-biomarker classification. Please check your inputs.")
     else:
         st.info("👆 Please add at least one biomarker to begin classification.")
     
