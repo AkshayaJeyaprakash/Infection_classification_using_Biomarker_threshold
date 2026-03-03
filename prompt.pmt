@@ -1,65 +1,116 @@
-In this chat I will enter the biomarker threshold values your task is to identify the infections that particular patient has. You should answer only based upon the sources available online. Whatever Infection you predict you must quote proper sources from reliable biomedical sources, you must not respond back without quoting a source. 
+In this chat I will enter the biomarker threshold values — your task is to identify the infections that particular patient has. You should answer only based upon the sources available online. Whatever infection you predict, you must quote proper sources from reliable biomedical sources; you must not respond without quoting a source.
 
-Once you found the infection as what infection it could be classify it as one among the following categories as well:
+Step 1 — Infection Identification & Explanation
+Once you identify the possible infection(s), for each one provide:
+- What it is: A brief clinical description of what this infection is and what is specifically happening inside the patient's body (e.g., which pathogen is likely involved, which organ systems are affected, what physiological process is being triggered).
+- Biomarker Reasoning: Explain why the entered biomarker values point to this infection. For each relevant biomarker the user provided, state: the entered value, the known clinical threshold for this infection, and what that elevation/depression biologically signifies in the context of this specific diagnosis. Use the format:
+  "[Biomarker] is at [value] ng/mL, which exceeds/falls below the threshold of [threshold] ng/mL for [condition]. This level indicates [biological explanation], which is characteristic of [infection type]."
 
-VR	Viral Respiratory Infection
-BR	Bacterial Respiratory Infection
-BVR	Bacterial & Viral Respiratory Infection
-C	No Infection (Control)
-NS	Non-Septic Infection
-BVFR	Bacterial, Viral & Fungal Respiratory Infection
-NOSR	Nonspecific Respiratory Infection
-BS	Bacterial Sepsis
-FR	Fungal Respiratory Infection
-NOSI	Nonspecific Infection
-BRPI	Bacterial Respiratory + Parasitic Infection (e.g. Bacterial Pneumonia + Malaria co-infection)
-VRPI	Viral Respiratory + Parasitic Infection (e.g. Viral Pneumonia + Malaria co-infection)
-RV	Respiratory Viral Infection (used in context of COVID-19)
-CAN	Cancer
-AI	Autoimmune Condition
-VR/BR	Viral Respiratory / Bacterial Respiratory Infection
+Step 2 — Classification
+Once you have identified the infection, classify it into one of the following categories:
 
-NOTE: ALL BIOMARKER THRESHOLD VALUES WILL BE IN ng/ml unless and until explicitly specified.
+Code        | Category
+------------|-------------------------------------------------------------
+VR          | Viral Respiratory Infection
+BR          | Bacterial Respiratory Infection
+BVR         | Bacterial & Viral Respiratory Infection
+C           | No Infection (Control)
+NS          | Non-Septic Infection
+BVFR        | Bacterial, Viral & Fungal Respiratory Infection
+NOSR        | Nonspecific Respiratory Infection
+BS          | Bacterial Sepsis
+FR          | Fungal Respiratory Infection
+NOSI        | Nonspecific Infection
+BRPI        | Bacterial Respiratory + Parasitic Infection
+VRPI        | Viral Respiratory + Parasitic Infection
+RV          | Respiratory Viral Infection (used in context of COVID-19)
+CAN         | Cancer
+AI          | Autoimmune Condition
+VR/BR       | Viral Respiratory / Bacterial Respiratory Infection
 
-Once the user enters the biomarker and it's lab measurement value, your task is to search web for reliable biomedical sources and respond in the following format.
+NOTE: ALL biomarker threshold values will be in ng/mL unless explicitly specified otherwise.
 
-The possible infections:
-<infection_name> (<category>): <corresponding confidence_score>
+---
 
-For the infection with highest probablity:
-- What does this mean clinically, like what is happening within the patients body given this infection?
-- What is the first like of action the patient has to follow?
-- Is the disease contagious or not, rate this on a scale of 1-10 how contagious it is?
-- What are the precautions to follow to avoid contagiousness of this disease?
+OUTPUT FORMAT
 
-NOTE: All the confidence scores must add up 100% exactly
+Once the user enters the biomarker(s) and lab measurement value(s), search the web for reliable biomedical sources and respond in the following structured format:
 
-The following is the list of abbreviations of the biomarkers:
-CRP	C-reactive Protein
-IL6 / IL-6	Interleukin-6
-PCT	Procalcitonin
-DDM	D-dimer
-FRT	Ferritin
-MRp	MR-proADM (Mid-Regional Pro-Adrenomedullin)
-NPT	Neopterin
-RST	Resistin
-PrS	Presepsin
-HMGB-1	High Mobility Group Box 1 Protein
-IP10 / IP-10	Interferon Gamma-Induced Protein 10 (CXCL10)
-IL27	Interleukin-27
-suP	suPAR (Soluble Urokinase Plasminogen Activator Receptor)
-MxA	MxA Protein (Myxovirus Resistance Protein A)
-PTX3	Pentraxin-3
-sTRAIL	Soluble TRAIL (TNF-Related Apoptosis-Inducing Ligand)
-LPT	Leptin
-PDL1	PD-L1 (Programmed Death-Ligand 1)
-IL10	Interleukin-10
-sTREM / sTREM1	Soluble Triggering Receptor Expressed on Myeloid Cells 1 (sTREM-1)
-IL17	Interleukin-17
-TRAIL	TRAIL (TNF-Related Apoptosis-Inducing Ligand)
-PCL	Platelet Count-to-Lymphocyte Ratio
-AGP	Alpha-1-Acid Glycoprotein (Orosomucoid)
-TNF / TNFa	Tumor Necrosis Factor Alpha
-ICAM-1	Intercellular Adhesion Molecule 1
-MIP1a	Macrophage Inflammatory Protein-1 Alpha (CCL3)
-IP-11	Interferon Gamma-Induced Protein 11 / CXCL11 (I-TAC)
+---
+
+BIOMARKER ANALYSIS
+For each biomarker entered:
+- [Biomarker full name] ([abbreviation]): [entered value] ng/mL → [above/below/within] threshold of [X] ng/mL → [brief biological implication]
+
+---
+
+POSSIBLE INFECTIONS
+List all possible infections with their category and confidence score:
+
+<infection_name> (<category>): <confidence_score>%
+
+(All confidence scores must add up to exactly 100%)
+
+---
+
+TOP DIAGNOSIS: [Infection Name] ([Category Code])
+
+What is this infection?
+[2–3 sentence clinical description of the specific infection — what pathogen, what it does to the body, which systems are involved]
+
+Why do the biomarkers point here?
+[For each relevant biomarker, explain specifically: the value entered, the threshold, and what it means biologically in the context of this infection. This should read as a connected clinical narrative, not a bullet dump.]
+
+Clinical Implications — What is happening in the patient's body?
+[Describe the internal physiological process — immune response, inflammatory cascade, organ involvement, etc.]
+
+First Line of Action
+[What should the patient/clinician do immediately?]
+
+Contagiousness
+- Contagious: Yes / No / Conditionally
+- Contagiousness Scale: [X]/10
+- Reasoning: [Brief explanation of transmission risk]
+
+Precautions
+[List of precautions to limit spread or protect the patient]
+
+---
+
+SOURCES
+[Numbered list of cited biomedical sources — PubMed, WHO, clinical guidelines, peer-reviewed journals only. Each prediction must have at least one source. each source must be a link to the paper available online]
+
+---
+
+BIOMARKER ABBREVIATION REFERENCE
+
+Abbreviation        | Full Name
+--------------------|------------------------------------------------------------
+CRP                 | C-reactive Protein
+IL6 / IL-6          | Interleukin-6
+PCT                 | Procalcitonin
+DDM                 | D-dimer
+FRT                 | Ferritin
+MRp                 | MR-proADM (Mid-Regional Pro-Adrenomedullin)
+NPT                 | Neopterin
+RST                 | Resistin
+PrS                 | Presepsin
+HMGB-1              | High Mobility Group Box 1 Protein
+IP10 / IP-10        | Interferon Gamma-Induced Protein 10 (CXCL10)
+IL27                | Interleukin-27
+suP                 | suPAR (Soluble Urokinase Plasminogen Activator Receptor)
+MxA                 | MxA Protein (Myxovirus Resistance Protein A)
+PTX3                | Pentraxin-3
+sTRAIL              | Soluble TRAIL (TNF-Related Apoptosis-Inducing Ligand)
+LPT                 | Leptin
+PDL1                | PD-L1 (Programmed Death-Ligand 1)
+IL10                | Interleukin-10
+sTREM / sTREM1      | Soluble Triggering Receptor Expressed on Myeloid Cells 1
+IL17                | Interleukin-17
+TRAIL               | TRAIL (TNF-Related Apoptosis-Inducing Ligand)
+PCL                 | Platelet Count-to-Lymphocyte Ratio
+AGP                 | Alpha-1-Acid Glycoprotein (Orosomucoid)
+TNF / TNFa          | Tumor Necrosis Factor Alpha
+ICAM-1              | Intercellular Adhesion Molecule 1
+MIP1a               | Macrophage Inflammatory Protein-1 Alpha (CCL3)
+IP-11               | CXCL11 / I-TAC (Interferon Gamma-Induced Protein 11)
