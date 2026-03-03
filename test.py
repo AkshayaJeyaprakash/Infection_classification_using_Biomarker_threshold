@@ -384,7 +384,6 @@ def plot_classification_ranges(biomarker, threshold_value, stats_dict, classific
 # ============================================================================
 # LLM FUNCTIONS
 # ============================================================================
-
 def get_llm_response(user_message, chat_history):
     """Get response from Gemini API"""
     try:
@@ -393,19 +392,14 @@ def get_llm_response(user_message, chat_history):
         # Build conversation history for context
         messages = []
         for msg in chat_history:
+            role = 'model' if msg['role'] == 'assistant' else 'user'
             messages.append({
-                'role': msg['role'],
+                'role': role,
                 'parts': [msg['content']]
             })
         
-        # Add current message
-        messages.append({
-            'role': 'user',
-            'parts': [user_message]
-        })
-        
         # Start chat with history
-        chat = model.start_chat(history=messages[:-1])
+        chat = model.start_chat(history=messages)
         
         # Send message and get response
         response = chat.send_message(user_message)
