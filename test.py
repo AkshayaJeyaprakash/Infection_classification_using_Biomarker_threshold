@@ -11,7 +11,6 @@ from datetime import datetime
 # UNIT CONVERSION
 # ============================================================================
 
-# Conversion factors to ng/mL (base unit)
 CONVERSION_FACTORS = {
     'ng/mL': 1,
     'pg/mL': 0.001,
@@ -28,12 +27,23 @@ CONVERSION_FACTORS = {
 
 UNITS_LIST = list(CONVERSION_FACTORS.keys())
 
+SYMPTOMS_LIST = [
+    'Fever',
+    'Malaise/Fatigue',
+    'Chills',
+    'Nausea/Vomiting',
+    'Muscle aches',
+    'Cough',
+    'Headache',
+    'Sore throat',
+    'Pain and swelling',
+    'Congestion'
+]
+
 def convert_to_ng_ml(value, unit):
-    """Convert value from given unit to ng/mL"""
     return value * CONVERSION_FACTORS.get(unit, 1)
 
 def format_biomarker_display(biomarker, value, unit):
-    """Format biomarker for display"""
     return f"{biomarker}: {value} {unit} ({convert_to_ng_ml(value, unit):.4f} ng/mL)"
 
 # ============================================================================
@@ -41,7 +51,6 @@ def format_biomarker_display(biomarker, value, unit):
 # ============================================================================
 
 def load_system_prompt():
-    """Load system prompt from prompt.pmt file"""
     try:
         with open('prompt.pmt', 'r', encoding='utf-8') as f:
             return f.read().strip()
@@ -50,7 +59,6 @@ def load_system_prompt():
         return "You are a helpful medical AI assistant specializing in biomarker analysis and infection classification."
 
 def initialize_gemini():
-    """Initialize Gemini API with API key from environment variable"""
     api_key = os.getenv('GEMINI_API_KEY')
     if not api_key:
         st.error("❌ GEMINI_API_KEY environment variable not set!")
@@ -128,10 +136,6 @@ def check_authentication():
     st.markdown("<br><br>", unsafe_allow_html=True)
     
     return False
-
-# ============================================================================
-# CHECK AUTHENTICATION
-# ============================================================================
 
 if not check_authentication():
     st.stop()
@@ -215,10 +219,6 @@ def classify_infection(biomarker, threshold_value, stats_dict, verbose=True):
 
 
 def classify_infection_bayesian_geometric_smoothed(biomarker_thresholds, stats_dict, verbose=True):
-    """
-    Bayesian classification with geometric mean and probability smoothing.
-    Smoothing prevents complete elimination when biomarkers disagree.
-    """
     MIN_PROBABILITY = 0.001
 
     first_biomarker = list(biomarker_thresholds.keys())[0]
@@ -236,7 +236,6 @@ def classify_infection_bayesian_geometric_smoothed(biomarker_thresholds, stats_d
     matched_infections = set()
     temp_results = {}
 
-    # STEP 1: Collect matches
     for biomarker_data in biomarker_thresholds.values():
         biomarker = biomarker_data['biomarker']
         threshold_ng_ml = biomarker_data['value_ng_ml']
@@ -258,7 +257,6 @@ def classify_infection_bayesian_geometric_smoothed(biomarker_thresholds, stats_d
         for match in result['Matches']:
             matched_infections.add(match['Infection'])
 
-    # STEP 2: Apply smoothing logic
     for biomarker in successful_biomarkers:
         result = temp_results[biomarker]
         individual_results[biomarker] = result
@@ -268,16 +266,12 @@ def classify_infection_bayesian_geometric_smoothed(biomarker_thresholds, stats_d
         
         for infection in all_infections:
             if infection in biomarker_probs:
-                # Matched by this biomarker
                 infection_probs[infection] *= biomarker_probs[infection]
             elif infection in matched_infections:
-                # Matched by another biomarker (smoothing)
                 infection_probs[infection] *= MIN_PROBABILITY
             else:
-                # Never matched by any biomarker
                 infection_probs[infection] *= 0.0
 
-    # STEP 3: Apply geometric mean
     n_biomarkers = len(successful_biomarkers)
 
     if n_biomarkers > 0:
@@ -287,7 +281,6 @@ def classify_infection_bayesian_geometric_smoothed(biomarker_thresholds, stats_d
     
     total_prob = sum(infection_probs.values())
 
-    # STEP 4: Build result
     if total_prob == 0:
         result = {
             'Method': 'Bayesian Probability (Geometric Mean + Smoothing)',
@@ -333,8 +326,6 @@ def classify_infection_bayesian_geometric_smoothed(biomarker_thresholds, stats_d
 
 def plot_classification_ranges(biomarker, threshold_value, stats_dict, classification_result):
     stats_df = stats_dict[biomarker]
-    
-    # Filter out infections with less than 5 data points
     stats_df = stats_df[stats_df['Count'] >= 5].copy()
     
     if len(stats_df) == 0:
@@ -384,28 +375,17 @@ def plot_classification_ranges(biomarker, threshold_value, stats_dict, classific
 # ============================================================================
 # LLM FUNCTIONS
 # ============================================================================
+
 def get_llm_response(user_message, chat_history):
-    """Get response from Gemini API"""
     try:
         model = initialize_gemini()
-        
-        # Build conversation history for context
         messages = []
         for msg in chat_history:
             role = 'model' if msg['role'] == 'assistant' else 'user'
-            messages.append({
-                'role': role,
-                'parts': [msg['content']]
-            })
-        
-        # Start chat with history
+            messages.append({'role': role, 'parts': [msg['content']]})
         chat = model.start_chat(history=messages)
-        
-        # Send message and get response
         response = chat.send_message(user_message)
-        
         return response.text
-        
     except Exception as e:
         print("\n" + "="*80)
         print("🔴 GEMINI API ERROR")
@@ -423,18 +403,18 @@ def get_llm_response(user_message, chat_history):
 
 if 'current_page' not in st.session_state:
     st.session_state.current_page = "Home"
-
 if 'biomarker_thresholds' not in st.session_state:
     st.session_state.biomarker_thresholds = {}
-
 if 'input_counter' not in st.session_state:
     st.session_state.input_counter = 0
-
 if 'llm_chat_history' not in st.session_state:
     st.session_state.llm_chat_history = []
-
 if 'llm_submitted' not in st.session_state:
     st.session_state.llm_submitted = False
+if 'selected_symptoms' not in st.session_state:
+    st.session_state.selected_symptoms = []
+if 'other_symptoms' not in st.session_state:
+    st.session_state.other_symptoms = ""
 
 # ============================================================================
 # PAGE CONFIGURATION
@@ -453,6 +433,8 @@ with st.sidebar:
         st.session_state.authenticated = False
         st.session_state.llm_chat_history = []
         st.session_state.biomarker_thresholds = {}
+        st.session_state.selected_symptoms = []
+        st.session_state.other_symptoms = ""
         st.rerun()
     
     st.markdown("---")
@@ -474,11 +456,10 @@ with st.sidebar:
         st.rerun()
 
 # ============================================================================
-# HELPER FUNCTION FOR BIOMARKER INPUT
+# HELPER FUNCTIONS
 # ============================================================================
 
 def render_biomarker_input(page_prefix=""):
-    """Render biomarker input section with unit support"""
     col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
     
     with col1:
@@ -514,7 +495,6 @@ def render_biomarker_input(page_prefix=""):
     
     if add_button and selected_biomarker and threshold_input is not None:
         if selected_biomarker not in st.session_state.biomarker_thresholds:
-            # Store both original and converted values
             st.session_state.biomarker_thresholds[selected_biomarker] = {
                 'biomarker': selected_biomarker,
                 'value': threshold_input,
@@ -529,7 +509,6 @@ def render_biomarker_input(page_prefix=""):
         st.warning("Please enter a value!")
 
 def display_added_biomarkers(page_prefix=""):
-    """Display currently added biomarkers with edit functionality"""
     if st.session_state.biomarker_thresholds:
         st.markdown("### Currently Added Biomarkers:")
         
@@ -560,7 +539,6 @@ def display_added_biomarkers(page_prefix=""):
                     label_visibility="collapsed"
                 )
             
-            # Update if changed
             if new_value != bio_data['value'] or new_unit != bio_data['unit']:
                 st.session_state.biomarker_thresholds[bio_key] = {
                     'biomarker': bio_data['biomarker'],
@@ -574,7 +552,6 @@ def display_added_biomarkers(page_prefix=""):
                     del st.session_state.biomarker_thresholds[bio_key]
                     st.rerun()
             
-            # Show converted value
             st.caption(f"→ {bio_data['value_ng_ml']:.4f} ng/mL")
         
         st.write(f"**Total Biomarkers:** {len(st.session_state.biomarker_thresholds)}")
@@ -583,7 +560,6 @@ def display_added_biomarkers(page_prefix=""):
 # PAGE ROUTING
 # ============================================================================
 
-# HOME PAGE
 if st.session_state.current_page == "Home":
     st.title("🧬 Biomarker Infection Classifier")
     st.markdown("---")
@@ -622,7 +598,6 @@ if st.session_state.current_page == "Home":
     st.markdown("---")
     st.markdown("*Powered by ASU*")
 
-# STATISTICAL PAGE
 elif st.session_state.current_page == "Statistical":
     st.title("📊 Statistical Classification")
     st.markdown("---")
@@ -753,7 +728,6 @@ elif st.session_state.current_page == "Statistical":
                         top_confidence = combined_result['Classifications'][0]['Confidence']
                         st.success(f"### 🎯 Predicted Infection: **{top_infection}** ({top_confidence:.2f}% confidence)")
                         
-                        # Show uncertainty warning if applicable
                         if len(combined_result['Classifications']) >= 2:
                             second_conf = combined_result['Classifications'][1]['Confidence']
                             if abs(top_confidence - second_conf) < 10:
@@ -766,7 +740,6 @@ elif st.session_state.current_page == "Statistical":
     st.markdown("---")
     st.markdown("*Powered by ASU*")
 
-# LLM-AIDED PAGE
 elif st.session_state.current_page == "LLM-Aided":
     st.title("🤖 LLM-Aided Classification")
     st.markdown("---")
@@ -777,20 +750,47 @@ elif st.session_state.current_page == "LLM-Aided":
         display_added_biomarkers("llm_")
         
         st.markdown("---")
+        st.subheader("Select Symptoms")
+        
+        selected_symptoms = st.multiselect(
+            "Choose symptoms from the list:",
+            SYMPTOMS_LIST,
+            default=st.session_state.selected_symptoms,
+            key="symptoms_multiselect"
+        )
+        st.session_state.selected_symptoms = selected_symptoms
+        
+        other_symptoms_input = st.text_area(
+            "Other symptoms (comma-separated):",
+            value=st.session_state.other_symptoms,
+            placeholder="e.g., Diarrhea, Rash, Difficulty breathing",
+            key="other_symptoms_input"
+        )
+        st.session_state.other_symptoms = other_symptoms_input
+        
+        st.markdown("---")
         
         if st.session_state.biomarker_thresholds:
             if st.button("🔬 Classify", type="primary", use_container_width=True, key="llm_classify_btn"):
                 st.session_state.llm_submitted = True
                 
-                # Create initial user message with biomarkers (with units)
                 biomarker_text = "\n".join([
                     f"{data['biomarker']}: {data['value']} {data['unit']}" 
                     for data in st.session_state.biomarker_thresholds.values()
                 ])
                 
+                all_symptoms = list(st.session_state.selected_symptoms)
+                if st.session_state.other_symptoms.strip():
+                    other_symp_list = [s.strip() for s in st.session_state.other_symptoms.split(',') if s.strip()]
+                    all_symptoms.extend(other_symp_list)
+                
+                symptoms_text = ", ".join(all_symptoms) if all_symptoms else "None reported"
+                
+                user_message = f"<thresholds>\n{biomarker_text}\n</thresholds>\n\nSymptoms: {symptoms_text}"
+                
                 st.session_state.llm_chat_history.append({
                     'role': 'user',
-                    'content': biomarker_text
+                    'content': user_message
                 })
                 
                 st.rerun()
@@ -800,7 +800,6 @@ elif st.session_state.current_page == "LLM-Aided":
     else:
         st.subheader("💬 Classification Analysis")
         
-        # Display chat history
         for idx, message in enumerate(st.session_state.llm_chat_history):
             if message['role'] == 'user':
                 with st.chat_message("user"):
@@ -809,7 +808,6 @@ elif st.session_state.current_page == "LLM-Aided":
                 with st.chat_message("assistant"):
                     st.markdown(message['content'])
         
-        # If last message was user, get LLM response
         if st.session_state.llm_chat_history and st.session_state.llm_chat_history[-1]['role'] == 'user':
             with st.chat_message("assistant"):
                 with st.spinner("🔄 Processing your request..."):
@@ -825,7 +823,6 @@ elif st.session_state.current_page == "LLM-Aided":
             })
             st.rerun()
         
-        # Chat input for follow-up questions
         user_input = st.chat_input("Ask a follow-up question...")
         
         if user_input:
@@ -835,12 +832,13 @@ elif st.session_state.current_page == "LLM-Aided":
             })
             st.rerun()
         
-        # Reset button
         st.markdown("---")
         if st.button("🔄 New Classification", use_container_width=True):
             st.session_state.llm_submitted = False
             st.session_state.llm_chat_history = []
             st.session_state.biomarker_thresholds = {}
+            st.session_state.selected_symptoms = []
+            st.session_state.other_symptoms = ""
             st.session_state.input_counter += 1
             st.rerun()
     
