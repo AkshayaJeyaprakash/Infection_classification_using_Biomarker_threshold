@@ -6,6 +6,8 @@ import hashlib
 import os
 import google.generativeai as genai
 from datetime import datetime
+import pandas as pd
+import joblib
 
 # ============================================================================
 # UNIT CONVERSION
@@ -151,6 +153,17 @@ def load_statistics():
 
 stats_dict = load_statistics()
 biomarkers = sorted(stats_dict.keys())
+
+RF_BIOMARKERS = ["CRP", "IL6", "PCT"]
+
+@st.cache_resource
+def load_rf_artifacts():
+    rf_model = joblib.load("custom_aug_rf_model.pkl")
+    rf_feature_cols = joblib.load("custom_aug_rf_columns.pkl")
+    rf_le = joblib.load("label_encoder.pkl")
+    return rf_model, rf_feature_cols, rf_le
+
+rf_model, rf_feature_cols, rf_le = load_rf_artifacts()
 
 # ============================================================================
 # CLASSIFICATION FUNCTIONS
@@ -416,6 +429,18 @@ if 'selected_symptoms' not in st.session_state:
 if 'other_symptoms' not in st.session_state:
     st.session_state.other_symptoms = ""
 
+
+if 'rf_biomarker_thresholds' not in st.session_state:
+    st.session_state.rf_biomarker_thresholds = {}
+if 'rf_input_counter' not in st.session_state:
+    st.session_state.rf_input_counter = 0
+if 'rf_submitted' not in st.session_state:
+    st.session_state.rf_submitted = False
+if 'rf_individual_results' not in st.session_state:
+    st.session_state.rf_individual_results = {}
+if 'rf_combined_result' not in st.session_state:
+    st.session_state.rf_combined_result = None
+
 # ============================================================================
 # PAGE CONFIGURATION
 # ============================================================================
@@ -435,6 +460,13 @@ with st.sidebar:
         st.session_state.biomarker_thresholds = {}
         st.session_state.selected_symptoms = []
         st.session_state.other_symptoms = ""
+
+        st.session_state.rf_biomarker_thresholds = {}
+        st.session_state.rf_submitted = False
+        st.session_state.rf_individual_results = {}
+        st.session_state.rf_combined_result = None
+        st.session_state.rf_input_counter = 0
+        
         st.rerun()
     
     st.markdown("---")
@@ -453,6 +485,11 @@ with st.sidebar:
     if st.button("🤖 LLM-Aided", use_container_width=True,
                  type="primary" if st.session_state.current_page == "LLM-Aided" else "secondary"):
         st.session_state.current_page = "LLM-Aided"
+        st.rerun()
+
+    if st.button("🌲 ML-Aided (RF)", use_container_width=True,
+                 type="primary" if st.session_state.current_page == "ML-Aided (RF)" else "secondary"):
+        st.session_state.current_page = "ML-Aided (RF)"
         st.rerun()
 
 # ============================================================================
@@ -555,6 +592,243 @@ def display_added_biomarkers(page_prefix=""):
             st.caption(f"→ {bio_data['value_ng_ml']:.4f} ng/mL")
         
         st.write(f"**Total Biomarkers:** {len(st.session_state.biomarker_thresholds)}")
+
+def prepare_rf_input(biomarker, value, unit, feature_cols):
+    x = pd.DataFrame({
+        "Biomarker": [biomarker],
+        "Unified Threshold": [convert_to_ng_ml(value, unit)]
+    })
+    x = pd.get_dummies(x, columns=["Biomarker"])
+    x = x.reindex(columns=feature_cols, fill_value=0)
+    return x
+
+
+def classify_infection_rf_single(biomarker, threshold_value, unit, rf_model, feature_cols, rf_le):
+    x = prepare_rf_input(biomarker, threshold_value, unit, feature_cols)
+
+    probs = rf_model.predict_proba(x)[0]
+    pred_idx = int(np.argmax(probs))
+    pred_label = rf_le.inverse_transform([pred_idx])[0]
+
+    ranked = sorted(zip(rf_le.classes_, probs), key=lambda t: t[1], reverse=True)
+
+    return {
+        "Biomarker": biomarker,
+        "Threshold": threshold_value,
+        "Unit": unit,
+        "Threshold_ng_ml": convert_to_ng_ml(threshold_value, unit),
+        "Predicted_Infection": pred_label,
+        "Confidence": float(probs[pred_idx] * 100),
+        "Probabilities": {cls: float(prob * 100) for cls, prob in zip(rf_le.classes_, probs)},
+        "Classifications": [
+            {
+                "Infection": cls,
+                "Confidence": float(prob * 100),
+                "Rank": rank + 1
+            }
+            for rank, (cls, prob) in enumerate(ranked)
+        ],
+        "Classification_Method": "Random Forest Single Biomarker"
+    }
+
+
+def classify_infection_rf_combined(biomarker_thresholds, rf_model, feature_cols, rf_le, method="geometric_mean", verbose=True):
+    if not biomarker_thresholds:
+        return {
+            "Status": "No Classification",
+            "Method": "Random Forest Combined",
+            "Biomarkers_Used": [],
+            "Classifications": []
+        }
+
+    all_probs = []
+    individual_results = []
+    used_biomarkers = []
+
+    for bio_data in biomarker_thresholds.values():
+        biomarker = bio_data["biomarker"]
+        value = bio_data["value"]
+        unit = bio_data["unit"]
+
+        if biomarker not in RF_BIOMARKERS:
+            if verbose:
+                st.warning(f"{biomarker} is not supported by the RF model, skipping...")
+            continue
+
+        single_result = classify_infection_rf_single(
+            biomarker, value, unit, rf_model, feature_cols, rf_le
+        )
+
+        individual_results.append(single_result)
+        used_biomarkers.append(biomarker)
+        all_probs.append([
+            single_result["Probabilities"][cls] / 100.0 for cls in rf_le.classes_
+        ])
+
+    if not all_probs:
+        return {
+            "Status": "No Classification",
+            "Method": "Random Forest Combined",
+            "Biomarkers_Used": used_biomarkers,
+            "Classifications": []
+        }
+
+    probs_array = np.array(all_probs)
+
+    if method == "average":
+        combined_probs = probs_array.mean(axis=0)
+    else:
+        combined_probs = np.exp(np.log(probs_array + 1e-12).mean(axis=0))
+
+    combined_probs = combined_probs / combined_probs.sum()
+
+    ranked = sorted(zip(rf_le.classes_, combined_probs), key=lambda t: t[1], reverse=True)
+
+    classifications = [
+        {
+            "Infection": cls,
+            "Confidence": float(prob * 100),
+            "Rank": rank + 1
+        }
+        for rank, (cls, prob) in enumerate(ranked)
+    ]
+
+    return {
+        "Status": "Success",
+        "Method": "Random Forest Combined",
+        "Biomarkers_Used": used_biomarkers,
+        "Total_Biomarkers": len(biomarker_thresholds),
+        "Individual_Results": individual_results,
+        "Classifications": classifications,
+        "Predicted_Infection": classifications[0]["Infection"],
+        "Confidence": classifications[0]["Confidence"]
+    }
+
+
+def plot_rf_probabilities(probability_dict, title):
+    labels = list(probability_dict.keys())
+    values = list(probability_dict.values())
+
+    fig, ax = plt.subplots(figsize=(7, 4))
+    bars = ax.bar(labels, values)
+
+    ax.set_title(title)
+    ax.set_ylabel("Confidence (%)")
+    ax.set_ylim(0, 100)
+
+    for bar, value in zip(bars, values):
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            value + 1,
+            f"{value:.2f}%",
+            ha="center",
+            va="bottom"
+        )
+
+    plt.tight_layout()
+    return fig
+
+
+def render_rf_biomarker_input(page_prefix=""):
+    col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
+
+    with col1:
+        available_biomarkers = [b for b in RF_BIOMARKERS if b not in st.session_state.rf_biomarker_thresholds]
+        selected_biomarker = st.selectbox(
+            "Select Biomarker",
+            [""] + available_biomarkers,
+            key=f"{page_prefix}rf_biomarker_select_{st.session_state.rf_input_counter}"
+        )
+
+    with col2:
+        threshold_input = st.number_input(
+            "Lab reading value",
+            min_value=0.0,
+            value=None,
+            step=0.01,
+            format="%.4f",
+            placeholder="Enter value...",
+            key=f"{page_prefix}rf_threshold_input_{st.session_state.rf_input_counter}"
+        )
+
+    with col3:
+        selected_unit = st.selectbox(
+            "Unit",
+            UNITS_LIST,
+            key=f"{page_prefix}rf_unit_select_{st.session_state.rf_input_counter}"
+        )
+
+    with col4:
+        st.write("")
+        st.write("")
+        add_button = st.button("➕ Add", use_container_width=True, key=f"{page_prefix}rf_add_btn")
+
+    if add_button and selected_biomarker and threshold_input is not None:
+        if selected_biomarker not in st.session_state.rf_biomarker_thresholds:
+            st.session_state.rf_biomarker_thresholds[selected_biomarker] = {
+                'biomarker': selected_biomarker,
+                'value': threshold_input,
+                'unit': selected_unit,
+                'value_ng_ml': convert_to_ng_ml(threshold_input, selected_unit)
+            }
+            st.session_state.rf_input_counter += 1
+            st.session_state.rf_submitted = False
+            st.rerun()
+        else:
+            st.warning(f"{selected_biomarker} is already added!")
+    elif add_button and threshold_input is None:
+        st.warning("Please enter a value!")
+
+
+def display_added_rf_biomarkers(page_prefix=""):
+    if st.session_state.rf_biomarker_thresholds:
+        st.markdown("### Currently Added Biomarkers:")
+
+        for bio_key in list(st.session_state.rf_biomarker_thresholds.keys()):
+            bio_data = st.session_state.rf_biomarker_thresholds[bio_key]
+            col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
+
+            with col1:
+                st.write(f"**{bio_data['biomarker']}**")
+
+            with col2:
+                new_value = st.number_input(
+                    "Value",
+                    value=bio_data['value'],
+                    min_value=0.0,
+                    step=0.01,
+                    format="%.4f",
+                    key=f"{page_prefix}rf_edit_val_{bio_key}",
+                    label_visibility="collapsed"
+                )
+
+            with col3:
+                new_unit = st.selectbox(
+                    "Unit",
+                    UNITS_LIST,
+                    index=UNITS_LIST.index(bio_data['unit']),
+                    key=f"{page_prefix}rf_edit_unit_{bio_key}",
+                    label_visibility="collapsed"
+                )
+
+            if new_value != bio_data['value'] or new_unit != bio_data['unit']:
+                st.session_state.rf_biomarker_thresholds[bio_key] = {
+                    'biomarker': bio_data['biomarker'],
+                    'value': new_value,
+                    'unit': new_unit,
+                    'value_ng_ml': convert_to_ng_ml(new_value, new_unit)
+                }
+                st.session_state.rf_submitted = False
+
+            with col4:
+                if st.button("🗑️", key=f"{page_prefix}rf_remove_{bio_key}", use_container_width=True):
+                    del st.session_state.rf_biomarker_thresholds[bio_key]
+                    st.session_state.rf_submitted = False
+                    st.rerun()
+
+            st.caption(f"→ {bio_data['value_ng_ml']:.4f} ng/mL")
+
+        st.write(f"**Total Biomarkers:** {len(st.session_state.rf_biomarker_thresholds)}")
 
 # ============================================================================
 # PAGE ROUTING
@@ -841,6 +1115,165 @@ elif st.session_state.current_page == "LLM-Aided":
             st.session_state.other_symptoms = ""
             st.session_state.input_counter += 1
             st.rerun()
+
+elif st.session_state.current_page == "ML-Aided (RF)":
+    st.title("🌲 ML-Aided (Random Forest)")
+    st.markdown("---")
+
+    st.subheader("Add Biomarkers")
+    render_rf_biomarker_input("rf_")
+    display_added_rf_biomarkers("rf_")
+
+    st.markdown("---")
+
+    if st.session_state.rf_biomarker_thresholds:
+        col_btn1, col_btn2 = st.columns([2, 1])
+
+        with col_btn1:
+            classify_button = st.button(
+                "🔬 Classify with Random Forest",
+                type="primary",
+                use_container_width=True,
+                key="rf_classify_btn"
+            )
+
+        with col_btn2:
+            if st.button("🔄 New Classification", use_container_width=True, key="rf_new_btn"):
+                st.session_state.rf_biomarker_thresholds = {}
+                st.session_state.rf_submitted = False
+                st.session_state.rf_individual_results = {}
+                st.session_state.rf_combined_result = None
+                st.session_state.rf_input_counter += 1
+                st.rerun()
+
+        if classify_button:
+            individual_results = {}
+
+            for bio_key in list(st.session_state.rf_biomarker_thresholds.keys()):
+                bio_data = st.session_state.rf_biomarker_thresholds[bio_key]
+                biomarker = bio_data['biomarker']
+                unit = bio_data['unit']
+
+                if biomarker not in RF_BIOMARKERS:
+                    continue
+
+                result = classify_infection_rf_single(
+                    biomarker,
+                    bio_data['value'],
+                    unit,
+                    rf_model,
+                    rf_feature_cols,
+                    rf_le
+                )
+                individual_results[biomarker] = result
+
+            combined_result = classify_infection_rf_combined(
+                st.session_state.rf_biomarker_thresholds,
+                rf_model,
+                rf_feature_cols,
+                rf_le,
+                verbose=False
+            )
+
+            st.session_state.rf_individual_results = individual_results
+            st.session_state.rf_combined_result = combined_result
+            st.session_state.rf_submitted = True
+            st.rerun()
+
+        if st.session_state.rf_submitted:
+            st.subheader("🔍 Individual Biomarker Results")
+
+            biomarker_list = list(st.session_state.rf_individual_results.keys())
+
+            if biomarker_list:
+                for idx in range(0, len(biomarker_list), 2):
+                    cols = st.columns(2)
+
+                    for col_idx, col in enumerate(cols):
+                        biomarker_idx = idx + col_idx
+                        if biomarker_idx < len(biomarker_list):
+                            biomarker = biomarker_list[biomarker_idx]
+                            result = st.session_state.rf_individual_results[biomarker]
+
+                            with col:
+                                with st.container(border=True):
+                                    st.markdown(f"### {biomarker}")
+                                    st.markdown(f"**Lab reading:** {result['Threshold']} {result['Unit']} ({result['Threshold_ng_ml']:.4f} ng/mL)")
+                                    st.markdown(f"**Method:** {result['Classification_Method']}")
+                                    st.success(f"**Prediction:** {result['Predicted_Infection']} ({result['Confidence']:.2f}% confidence)")
+
+                                    for i, match in enumerate(result['Classifications'], 1):
+                                        st.markdown(f"{i}. **{match['Infection']}**: {match['Confidence']:.2f}%")
+
+                                    fig = plot_rf_probabilities(
+                                        result["Probabilities"],
+                                        f"{biomarker} Random Forest Probabilities"
+                                    )
+                                    st.pyplot(fig, clear_figure=True)
+
+            st.markdown("---")
+            st.subheader("🎯 Combined Multi-Biomarker Classification")
+
+            combined_result = st.session_state.rf_combined_result
+
+            if combined_result and combined_result['Status'] == 'Success':
+                col1, col2 = st.columns([1, 2])
+
+                with col1:
+                    st.markdown("#### 📋 Summary")
+                    st.markdown(f"**Biomarkers Used:** {len(combined_result['Biomarkers_Used'])} / {combined_result['Total_Biomarkers']}")
+                    st.markdown("**Method:** Random Forest Combined")
+                    st.markdown("**Fusion:** Geometric Mean")
+
+                with col2:
+                    st.markdown("#### Final Classification Results")
+
+                    results_data = []
+                    for classification in combined_result['Classifications']:
+                        rank = classification['Rank']
+                        infection = classification['Infection']
+                        confidence = classification['Confidence']
+
+                        if rank == 1:
+                            status = "⭐ MOST LIKELY"
+                        elif confidence > 10:
+                            status = "✓ Possible"
+                        else:
+                            status = "○ Unlikely"
+
+                        results_data.append({
+                            'Rank': rank,
+                            'Infection': infection,
+                            'Confidence (%)': f"{confidence:.2f}",
+                            'Status': status
+                        })
+
+                    results_df = pd.DataFrame(results_data)
+                    st.dataframe(results_df, hide_index=True, use_container_width=True)
+
+                if combined_result['Classifications']:
+                    top_infection = combined_result['Classifications'][0]['Infection']
+                    top_confidence = combined_result['Classifications'][0]['Confidence']
+                    st.success(f"### 🎯 Predicted Infection: **{top_infection}** ({top_confidence:.2f}% confidence)")
+
+                    if len(combined_result['Classifications']) >= 2:
+                        second_conf = combined_result['Classifications'][1]['Confidence']
+                        if abs(top_confidence - second_conf) < 10:
+                            st.warning("⚠️ Close confidence scores detected. This may indicate conflicting biomarker evidence or uncertainty.")
+
+                fig = plot_rf_probabilities(
+                    {c['Infection']: c['Confidence'] for c in combined_result['Classifications']},
+                    "Combined Random Forest Probabilities"
+                )
+                st.pyplot(fig, clear_figure=True)
+            else:
+                st.error("❌ Could not perform Random Forest classification. Please check your inputs.")
+    else:
+        st.info("👆 Please add at least one biomarker to begin classification.")
+
+    st.markdown("---")
+    st.markdown("*Powered by ASU*")
+    
     
     st.markdown("---")
     st.markdown("*Powered by ASU*")
