@@ -1162,8 +1162,8 @@ def render_ml_symptom_input(page_prefix=""):
     current_symptoms = st.session_state.get("rf_symptoms", {col: 0 for col in ML_SYMPTOM_COLS})
     selected_symptoms = {}
 
-    for group_name, symptom_cols in ML_SYMPTOM_GROUPS:
-        with st.expander(f"{group_name} ({len(symptom_cols)})", expanded=True):
+    for group_idx, (group_name, symptom_cols) in enumerate(ML_SYMPTOM_GROUPS):
+        with st.expander(f"{group_name} ({len(symptom_cols)})", expanded=(group_idx == 0)):
             for row_start in range(0, len(symptom_cols), 4):
                 cols = st.columns(4)
                 for col_idx, symptom_col in enumerate(symptom_cols[row_start:row_start + 4]):
@@ -1299,45 +1299,39 @@ if st.session_state.current_page == "Home":
     st.markdown("## Welcome!")
     st.markdown("This tool helps classify infection types based on biomarker laboratory readings.")
     
-    st.markdown("### Choose Your Classification Method:")
+    st.markdown("### Choose an approach based on how you want to analyze the case.")
     
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.markdown("#### 📊 Statistical Approach")
-        st.markdown("""
-        Uses Bayesian probability and statistical range analysis to predict infections based on:
-        - Mean ± Standard Deviation ranges
-        - Min-Max ranges
-        - Multi-biomarker fusion with smoothing
-        """)
-        if st.button("Go to Statistical Approach →", use_container_width=True, type="primary"):
-            st.session_state.current_page = "Statistical Approach"
-            st.rerun()
-    
-    with col2:
-        st.markdown("#### 🌲 Machine Learning Approach")
-        st.markdown("""
-        Uses staged Random Forest models to combine:
-        - Biomarker-based infection type prediction
-        - Symptom-based infection type prediction
-        - Common disease name prediction
-        """)
-        if st.button("Go to Machine Learning Approach →", use_container_width=True, type="primary"):
-            st.session_state.current_page = "Machine Learning Approach"
-            st.rerun()
+    method_rows = [
+        {
+            "title": "📊 Statistical Approach",
+            "button": "Open Statistical Approach →",
+            "page": "Statistical Approach",
+            "description": "Compares biomarker readings against statistical ranges from the reference data. Best for transparent, range-based classification that shows which infections match each biomarker and how multiple biomarkers combine."
+        },
+        {
+            "title": "🌲 Machine Learning Approach",
+            "button": "Open Machine Learning Approach →",
+            "page": "Machine Learning Approach",
+            "description": "Runs the staged Random Forest pipeline using both biomarkers and selected symptoms. It first predicts the infection type, then uses that infection type to rank the most likely common disease names."
+        },
+        {
+            "title": "🤖 LLM-Based Approach",
+            "button": "Open LLM-Based Approach →",
+            "page": "LLM-Based Approach",
+            "description": "Uses biomarker readings and symptoms to generate a clinical-style explanation and interactive follow-up. Best for narrative interpretation, reasoning, and asking additional questions after entering the case details."
+        }
+    ]
 
-    with col3:
-        st.markdown("#### 🤖 LLM-Based Approach")
-        st.markdown("""
-        Uses Large Language Models combined with statistical data to provide:
-        - Natural language explanations
-        - Context-aware predictions
-        - Interactive assistance
-        """)
-        if st.button("Go to LLM-Based Approach →", use_container_width=True, type="primary"):
-            st.session_state.current_page = "LLM-Based Approach"
-            st.rerun()
+    for method in method_rows:
+        title_col, button_col = st.columns([3, 1])
+        with title_col:
+            st.markdown(f"#### {method['title']}")
+        with button_col:
+            if st.button(method["button"], use_container_width=True, type="primary", key=f"home_{method['page']}"):
+                st.session_state.current_page = method["page"]
+                st.rerun()
+        st.markdown(method["description"])
+        st.markdown("---")
     
     st.markdown("---")
     st.markdown("*Powered by ASU*")
