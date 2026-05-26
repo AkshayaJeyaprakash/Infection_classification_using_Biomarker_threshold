@@ -7,7 +7,6 @@ import os
 import google.generativeai as genai
 from datetime import datetime
 import pandas as pd
-import joblib
 
 # ============================================================================
 # UNIT CONVERSION
@@ -154,16 +153,177 @@ def load_statistics():
 stats_dict = load_statistics()
 biomarkers = sorted(stats_dict.keys())
 
-RF_BIOMARKERS = ["CRP", "IL6", "PCT"]
+MODEL_DIR = os.path.dirname(os.path.abspath(__file__))
+MIN_PROBABILITY = 0.001
+TOP_N_DISEASE_PRINT = 5
 
-@st.cache_resource
-def load_rf_artifacts():
-    rf_model = joblib.load("custom_aug_rf_model.pkl")
-    rf_feature_cols = joblib.load("custom_aug_rf_columns.pkl")
-    rf_le = joblib.load("label_encoder.pkl")
-    return rf_model, rf_feature_cols, rf_le
+SYMPTOM_TO_CODE = {
+    "Bacterial": "BR",
+    "Viral": "VR",
+    "Viral/Bacterial": "BVR",
+    "Control": "C",
+    "C": "C"
+}
 
-rf_model, rf_feature_cols, rf_le = load_rf_artifacts()
+CODE_TO_SYMPTOM = {
+    "BR": "Bacterial",
+    "VR": "Viral",
+    "BVR": "Viral/Bacterial",
+    "C": "Control"
+}
+
+ML_SYMPTOM_COLS = [
+    'Fever/ \nTemp\u2009> 38°C',
+    'Chills/Shaking/Shivering/Rigors',
+    'Malaise/Fatigue',
+    'Muscle/Body Aches/Arthralgia/Myalgia',
+    'Lymphadenopathy/Swollen Lymph',
+    'Sweat',
+    'Cough',
+    'Sore Throat/\nThroat Irritation/\nThroat Infection/\nInflamed pharynx/\nPharyngitis',
+    'Nasal Congestion',
+    'Diarrhea/Other GI Symptoms',
+    'Vomiting',
+    'Dysuria',
+    'Neck Stiffness',
+    'Rash/Skin Reactions',
+    'Tachycardia/Circulation//Palptations',
+    'Tachypnea/Tachypnoea/Shortness of Breath/Wheezing/Dyspnea/Grunting/Stridor/Difficulty Breathing',
+    'Dry Throat/ Hoarse voice',
+    'Dry Nose',
+    ' Loss of Smell/Anosmia ',
+    'Loss of Taste/Dysgeusia ',
+    'Loss of Appetite',
+    'Headache ',
+    'Chest Pain',
+    'Oxygen saturation\u2009<\u200990% in room air',
+    'Elevated pulse (>90 bpm)',
+    'Respiratory rate >20 breaths per minute',
+    'Dizziness',
+    'Nausea',
+    'Sputum/Expectoration',
+    'Runny Nose/Rhinorrhoea',
+    'Conjunctivitis/Eye Pain',
+    'Arthralgias/Joint Pain',
+    'Disturbed Sleep',
+    'Rhinitis',
+    'Sinus',
+    'Ear Pain (Earache, Otalgia)',
+    'Chest Indrawing',
+    'Cognitive health/Brain fog',
+    'Sneezing',
+    'Phlegm',
+    'Weight loss',
+    'Hemoptysis/ \nBlood in mucus',
+    'Exudates',
+    'Tonsillitis/ \nInflamed tonsils '
+]
+
+ML_SYMPTOM_LABELS = {
+    'Fever/ \nTemp\u2009> 38°C': 'Fever > 38 C',
+    'Chills/Shaking/Shivering/Rigors': 'Chills / Rigors',
+    'Malaise/Fatigue': 'Malaise / Fatigue',
+    'Muscle/Body Aches/Arthralgia/Myalgia': 'Muscle / Body aches',
+    'Lymphadenopathy/Swollen Lymph': 'Swollen lymph nodes',
+    'Sweat': 'Sweating',
+    'Cough': 'Cough',
+    'Sore Throat/\nThroat Irritation/\nThroat Infection/\nInflamed pharynx/\nPharyngitis': 'Sore throat',
+    'Nasal Congestion': 'Nasal congestion',
+    'Diarrhea/Other GI Symptoms': 'Diarrhea / GI symptoms',
+    'Vomiting': 'Vomiting',
+    'Dysuria': 'Dysuria',
+    'Neck Stiffness': 'Neck stiffness',
+    'Rash/Skin Reactions': 'Rash / Skin reaction',
+    'Tachycardia/Circulation//Palptations': 'Tachycardia / Palpitations',
+    'Tachypnea/Tachypnoea/Shortness of Breath/Wheezing/Dyspnea/Grunting/Stridor/Difficulty Breathing': 'Shortness of breath',
+    'Dry Throat/ Hoarse voice': 'Dry throat / Hoarse voice',
+    'Dry Nose': 'Dry nose',
+    ' Loss of Smell/Anosmia ': 'Loss of smell',
+    'Loss of Taste/Dysgeusia ': 'Loss of taste',
+    'Loss of Appetite': 'Loss of appetite',
+    'Headache ': 'Headache',
+    'Chest Pain': 'Chest pain',
+    'Oxygen saturation\u2009<\u200990% in room air': 'Oxygen saturation < 90%',
+    'Elevated pulse (>90 bpm)': 'Elevated pulse > 90 bpm',
+    'Respiratory rate >20 breaths per minute': 'Respiratory rate > 20',
+    'Dizziness': 'Dizziness',
+    'Nausea': 'Nausea',
+    'Sputum/Expectoration': 'Sputum / Expectoration',
+    'Runny Nose/Rhinorrhoea': 'Runny nose',
+    'Conjunctivitis/Eye Pain': 'Conjunctivitis / Eye pain',
+    'Arthralgias/Joint Pain': 'Joint pain',
+    'Disturbed Sleep': 'Disturbed sleep',
+    'Rhinitis': 'Rhinitis',
+    'Sinus': 'Sinus symptoms',
+    'Ear Pain (Earache, Otalgia)': 'Ear pain',
+    'Chest Indrawing': 'Chest indrawing',
+    'Cognitive health/Brain fog': 'Brain fog',
+    'Sneezing': 'Sneezing',
+    'Phlegm': 'Phlegm',
+    'Weight loss': 'Weight loss',
+    'Hemoptysis/ \nBlood in mucus': 'Blood in mucus',
+    'Exudates': 'Exudates',
+    'Tonsillitis/ \nInflamed tonsils ': 'Tonsillitis'
+}
+
+ML_SYMPTOM_GROUPS = [
+    ("General / Systemic", [
+        'Fever/ \nTemp\u2009> 38°C',
+        'Chills/Shaking/Shivering/Rigors',
+        'Malaise/Fatigue',
+        'Muscle/Body Aches/Arthralgia/Myalgia',
+        'Lymphadenopathy/Swollen Lymph',
+        'Sweat',
+        'Loss of Appetite',
+        'Weight loss'
+    ]),
+    ("Respiratory / ENT", [
+        'Cough',
+        'Sore Throat/\nThroat Irritation/\nThroat Infection/\nInflamed pharynx/\nPharyngitis',
+        'Nasal Congestion',
+        'Tachypnea/Tachypnoea/Shortness of Breath/Wheezing/Dyspnea/Grunting/Stridor/Difficulty Breathing',
+        'Dry Throat/ Hoarse voice',
+        'Dry Nose',
+        'Sputum/Expectoration',
+        'Runny Nose/Rhinorrhoea',
+        'Rhinitis',
+        'Sinus',
+        'Ear Pain (Earache, Otalgia)',
+        'Chest Indrawing',
+        'Sneezing',
+        'Phlegm',
+        'Hemoptysis/ \nBlood in mucus',
+        'Exudates',
+        'Tonsillitis/ \nInflamed tonsils '
+    ]),
+    ("GI / Urinary", [
+        'Diarrhea/Other GI Symptoms',
+        'Vomiting',
+        'Dysuria',
+        'Nausea'
+    ]),
+    ("Neurologic / Sensory", [
+        'Neck Stiffness',
+        ' Loss of Smell/Anosmia ',
+        'Loss of Taste/Dysgeusia ',
+        'Headache ',
+        'Dizziness',
+        'Disturbed Sleep',
+        'Cognitive health/Brain fog'
+    ]),
+    ("Skin / Pain / Other", [
+        'Rash/Skin Reactions',
+        'Chest Pain',
+        'Conjunctivitis/Eye Pain',
+        'Arthralgias/Joint Pain'
+    ]),
+    ("Vitals / Severity", [
+        'Tachycardia/Circulation//Palptations',
+        'Oxygen saturation\u2009<\u200990% in room air',
+        'Elevated pulse (>90 bpm)',
+        'Respiratory rate >20 breaths per minute'
+    ])
+]
 
 # ============================================================================
 # CLASSIFICATION FUNCTIONS
@@ -444,6 +604,10 @@ if 'rf_individual_results' not in st.session_state:
     st.session_state.rf_individual_results = {}
 if 'rf_combined_result' not in st.session_state:
     st.session_state.rf_combined_result = None
+if 'rf_pipeline_result' not in st.session_state:
+    st.session_state.rf_pipeline_result = None
+if 'rf_symptoms' not in st.session_state:
+    st.session_state.rf_symptoms = {col: 0 for col in ML_SYMPTOM_COLS}
 
 # ============================================================================
 # PAGE CONFIGURATION
@@ -469,6 +633,8 @@ with st.sidebar:
         st.session_state.rf_submitted = False
         st.session_state.rf_individual_results = {}
         st.session_state.rf_combined_result = None
+        st.session_state.rf_pipeline_result = None
+        st.session_state.rf_symptoms = {col: 0 for col in ML_SYMPTOM_COLS}
         st.session_state.rf_input_counter = 0
         
         st.rerun()
@@ -597,147 +763,435 @@ def display_added_biomarkers(page_prefix=""):
         
         st.write(f"**Total Biomarkers:** {len(st.session_state.biomarker_thresholds)}")
 
-def prepare_rf_input(biomarker, value, unit, feature_cols):
-    x = pd.DataFrame({
-        "Biomarker": [biomarker],
-        "Unified Threshold": [convert_to_ng_ml(value, unit)]
-    })
-    x = pd.get_dummies(x, columns=["Biomarker"])
-    x = x.reindex(columns=feature_cols, fill_value=0)
-    return x
+@st.cache_resource
+def load_ml_artifact(name):
+    with open(os.path.join(MODEL_DIR, name), "rb") as f:
+        return pickle.load(f)
 
 
-def classify_infection_rf_single(biomarker, threshold_value, unit, rf_model, feature_cols, rf_le):
-    x = prepare_rf_input(biomarker, threshold_value, unit, feature_cols)
+def geometric_mean_combine(source_prob_dicts, all_classes):
+    n = len(source_prob_dicts)
+    if n == 0:
+        return {}
 
-    probs = rf_model.predict_proba(x)[0]
-    pred_idx = int(np.argmax(probs))
-    pred_label = rf_le.inverse_transform([pred_idx])[0]
+    matched_classes = set()
+    for source in source_prob_dicts:
+        for cls, probability in source.items():
+            if probability > 0:
+                matched_classes.add(cls)
 
-    ranked = sorted(zip(rf_le.classes_, probs), key=lambda t: t[1], reverse=True)
-
-    return {
-        "Biomarker": biomarker,
-        "Threshold": threshold_value,
-        "Unit": unit,
-        "Threshold_ng_ml": convert_to_ng_ml(threshold_value, unit),
-        "Predicted_Infection": pred_label,
-        "Confidence": float(probs[pred_idx] * 100),
-        "Probabilities": {cls: float(prob * 100) for cls, prob in zip(rf_le.classes_, probs)},
-        "Classifications": [
-            {
-                "Infection": cls,
-                "Confidence": float(prob * 100),
-                "Rank": rank + 1
-            }
-            for rank, (cls, prob) in enumerate(ranked)
-        ],
-        "Classification_Method": "Random Forest Single Biomarker"
-    }
-
-
-def classify_infection_rf_combined(biomarker_thresholds, rf_model, feature_cols, rf_le, method="geometric_mean", verbose=True):
-    if not biomarker_thresholds:
-        return {
-            "Status": "No Classification",
-            "Method": "Random Forest Combined",
-            "Biomarkers_Used": [],
-            "Classifications": []
-        }
-
-    all_probs = []
-    individual_results = []
-    used_biomarkers = []
-
-    for bio_data in biomarker_thresholds.values():
-        biomarker = bio_data["biomarker"]
-        value = bio_data["value"]
-        unit = bio_data["unit"]
-
-        if biomarker not in RF_BIOMARKERS:
-            if verbose:
-                st.warning(f"{biomarker} is not supported by the RF model, skipping...")
+    combined = {}
+    for cls in all_classes:
+        if cls not in matched_classes:
+            combined[cls] = 0.0
             continue
 
-        single_result = classify_infection_rf_single(
-            biomarker, value, unit, rf_model, feature_cols, rf_le
-        )
+        product = 1.0
+        for source in source_prob_dicts:
+            probability = source.get(cls, 0.0)
+            product *= probability if probability > 0 else MIN_PROBABILITY
+        combined[cls] = product ** (1.0 / n)
 
-        individual_results.append(single_result)
-        used_biomarkers.append(biomarker)
-        all_probs.append([
-            single_result["Probabilities"][cls] / 100.0 for cls in rf_le.classes_
-        ])
+    total = sum(combined.values())
+    if total == 0:
+        return {cls: 0.0 for cls in all_classes}
 
-    if not all_probs:
+    return {cls: value / total for cls, value in combined.items()}
+
+
+def rank_classifications(normalized_probs):
+    sorted_items = sorted(normalized_probs.items(), key=lambda x: x[1], reverse=True)
+    classifications = []
+
+    for rank, (cls, confidence) in enumerate(sorted_items, start=1):
+        if confidence <= 0:
+            break
+        classifications.append({
+            "Rank": rank,
+            "Class": cls,
+            "Confidence": confidence * 100
+        })
+
+    return classifications
+
+
+def status_label(rank, confidence):
+    if rank == 1:
+        return "MOST LIKELY"
+    if confidence > 10:
+        return "Possible"
+    return "Unlikely"
+
+
+def infection_type_label(infection_type):
+    readable = CODE_TO_SYMPTOM.get(infection_type)
+    if readable:
+        return f"{infection_type} ({readable})"
+    return infection_type or "N/A"
+
+
+def rf1_single(biomarker, threshold, le_bio, le_unit, le_target, clf):
+    if biomarker not in le_bio.classes_:
+        return None
+
+    bio_enc = le_bio.transform([biomarker])[0]
+    unit_enc = 0
+    x = np.array([[bio_enc, unit_enc, threshold]])
+    proba = clf.predict_proba(x)[0]
+
+    return {cls: float(probability) for cls, probability in zip(le_target.classes_, proba)}
+
+
+def predict_infection_from_biomarkers(biomarker_thresholds):
+    clf = load_ml_artifact("rf1_infection_type.pkl")
+    le_bio = load_ml_artifact("rf1_le_biomarker.pkl")
+    le_unit = load_ml_artifact("rf1_le_units.pkl")
+    le_target = load_ml_artifact("rf1_le_infection_type.pkl")
+    all_classes = list(le_target.classes_)
+
+    source_dicts = []
+    individual_results = {}
+    successful = []
+    skipped = []
+
+    for biomarker, threshold in biomarker_thresholds.items():
+        prob_dict = rf1_single(biomarker, threshold, le_bio, le_unit, le_target, clf)
+        if prob_dict is None:
+            skipped.append(biomarker)
+            continue
+
+        source_dicts.append(prob_dict)
+        individual_results[biomarker] = prob_dict
+        successful.append(biomarker)
+
+    if not source_dicts:
         return {
-            "Status": "No Classification",
-            "Method": "Random Forest Combined",
-            "Biomarkers_Used": used_biomarkers,
-            "Classifications": []
+            "status": "No Classification",
+            "predicted_infection_type": None,
+            "confidence": 0.0,
+            "classifications": [],
+            "biomarkers_used": successful,
+            "individual_results": individual_results,
+            "skipped_biomarkers": skipped
         }
 
-    probs_array = np.array(all_probs)
-
-    if method == "average":
-        combined_probs = probs_array.mean(axis=0)
-    else:
-        combined_probs = np.exp(np.log(probs_array + 1e-12).mean(axis=0))
-
-    combined_probs = combined_probs / combined_probs.sum()
-
-    ranked = sorted(zip(rf_le.classes_, combined_probs), key=lambda t: t[1], reverse=True)
-
-    classifications = [
-        {
-            "Infection": cls,
-            "Confidence": float(prob * 100),
-            "Rank": rank + 1
-        }
-        for rank, (cls, prob) in enumerate(ranked)
-    ]
+    normalized = geometric_mean_combine(source_dicts, all_classes)
+    ranked = rank_classifications(normalized)
+    top = ranked[0] if ranked else None
 
     return {
-        "Status": "Success",
-        "Method": "Random Forest Combined",
-        "Biomarkers_Used": used_biomarkers,
-        "Total_Biomarkers": len(biomarker_thresholds),
-        "Individual_Results": individual_results,
-        "Classifications": classifications,
-        "Predicted_Infection": classifications[0]["Infection"],
-        "Confidence": classifications[0]["Confidence"]
+        "status": "Success",
+        "predicted_infection_type": top["Class"] if top else None,
+        "confidence": top["Confidence"] if top else 0.0,
+        "classifications": ranked,
+        "biomarkers_used": successful,
+        "individual_results": individual_results,
+        "skipped_biomarkers": skipped
     }
 
 
-def plot_rf_probabilities(probability_dict, title):
-    labels = list(probability_dict.keys())
-    values = list(probability_dict.values())
+def predict_infection_from_symptoms(symptoms):
+    clf = load_ml_artifact("rf3_infection_type_symptoms.pkl")
+    le_target = load_ml_artifact("rf3_le_infection_type.pkl")
 
-    fig, ax = plt.subplots(figsize=(7, 4))
-    bars = ax.bar(labels, values)
+    x = np.array([[symptoms.get(col, 0) for col in ML_SYMPTOM_COLS]])
+    proba = clf.predict_proba(x)[0]
+    prob_dict = {
+        SYMPTOM_TO_CODE.get(cls, cls): float(probability)
+        for cls, probability in zip(le_target.classes_, proba)
+    }
+    ranked = rank_classifications(prob_dict)
+    top = ranked[0] if ranked else None
 
-    ax.set_title(title)
-    ax.set_ylabel("Confidence (%)")
-    ax.set_ylim(0, 100)
+    return {
+        "status": "Success" if top else "No Classification",
+        "predicted_infection_type": top["Class"] if top else None,
+        "confidence": top["Confidence"] if top else 0.0,
+        "classifications": ranked,
+        "prob_dict": prob_dict
+    }
 
-    for bar, value in zip(bars, values):
-        ax.text(
-            bar.get_x() + bar.get_width() / 2,
-            value + 1,
-            f"{value:.2f}%",
-            ha="center",
-            va="bottom"
+
+def predict_infection_combined(biomarker_thresholds, symptoms):
+    rf1 = predict_infection_from_biomarkers(biomarker_thresholds)
+    rf3 = predict_infection_from_symptoms(symptoms)
+
+    all_classes = sorted(
+        set(c["Class"] for c in rf1["classifications"]) |
+        set(c["Class"] for c in rf3["classifications"])
+    )
+
+    sources = []
+    if rf1["status"] == "Success":
+        sources.append({c["Class"]: c["Confidence"] / 100 for c in rf1["classifications"]})
+    if rf3["status"] == "Success":
+        sources.append({c["Class"]: c["Confidence"] / 100 for c in rf3["classifications"]})
+
+    if not sources:
+        return {
+            "status": "No Classification",
+            "predicted_infection_type": None,
+            "confidence": 0.0,
+            "classifications": [],
+            "rf1_result": rf1,
+            "rf3_result": rf3
+        }
+
+    normalized = geometric_mean_combine(sources, all_classes)
+    ranked = rank_classifications(normalized)
+    top = ranked[0] if ranked else None
+
+    return {
+        "status": "Success",
+        "predicted_infection_type": top["Class"] if top else None,
+        "confidence": top["Confidence"] if top else 0.0,
+        "classifications": ranked,
+        "rf1_result": rf1,
+        "rf3_result": rf3
+    }
+
+
+def rf2_single(biomarker, threshold, infection_type, le_bio, le_unit, le_inf, le_target, clf):
+    if biomarker not in le_bio.classes_ or infection_type not in le_inf.classes_:
+        return None
+
+    bio_enc = le_bio.transform([biomarker])[0]
+    unit_enc = 0
+    inf_enc = le_inf.transform([infection_type])[0]
+    x = np.array([[bio_enc, unit_enc, threshold, inf_enc]])
+    proba = clf.predict_proba(x)[0]
+
+    return {cls: float(probability) for cls, probability in zip(le_target.classes_, proba)}
+
+
+def predict_disease_from_biomarkers(biomarker_thresholds, infection_type):
+    clf = load_ml_artifact("rf2_disease_name.pkl")
+    le_bio = load_ml_artifact("rf2_le_biomarker.pkl")
+    le_unit = load_ml_artifact("rf2_le_units.pkl")
+    le_inf = load_ml_artifact("rf2_le_infection_type.pkl")
+    le_target = load_ml_artifact("rf2_le_disease_name.pkl")
+    all_classes = list(le_target.classes_)
+
+    source_dicts = []
+    individual_results = {}
+    successful = []
+    skipped = []
+
+    for biomarker, threshold in biomarker_thresholds.items():
+        prob_dict = rf2_single(
+            biomarker, threshold, infection_type, le_bio, le_unit, le_inf, le_target, clf
         )
+        if prob_dict is None:
+            skipped.append(biomarker)
+            continue
 
-    plt.tight_layout()
-    return fig
+        source_dicts.append(prob_dict)
+        individual_results[biomarker] = prob_dict
+        successful.append(biomarker)
+
+    if not source_dicts:
+        return {
+            "status": "No Classification",
+            "predicted_disease": None,
+            "confidence": 0.0,
+            "classifications": [],
+            "biomarkers_used": successful,
+            "individual_results": individual_results,
+            "skipped_biomarkers": skipped
+        }
+
+    normalized = geometric_mean_combine(source_dicts, all_classes)
+    ranked = rank_classifications(normalized)
+    top = ranked[0] if ranked else None
+
+    return {
+        "status": "Success",
+        "predicted_disease": top["Class"] if top else None,
+        "confidence": top["Confidence"] if top else 0.0,
+        "classifications": ranked,
+        "biomarkers_used": successful,
+        "individual_results": individual_results,
+        "skipped_biomarkers": skipped
+    }
+
+
+def predict_disease_from_symptoms(symptoms, infection_type):
+    clf = load_ml_artifact("rf4_disease_name_symptoms.pkl")
+    le_inf = load_ml_artifact("rf4_le_infection_type.pkl")
+    le_target = load_ml_artifact("rf4_le_disease_name.pkl")
+    infection_type_rf4 = CODE_TO_SYMPTOM.get(infection_type, infection_type)
+
+    if infection_type_rf4 not in le_inf.classes_:
+        return {
+            "status": "No Classification",
+            "predicted_disease": None,
+            "confidence": 0.0,
+            "classifications": []
+        }
+
+    inf_enc = le_inf.transform([infection_type_rf4])[0]
+    symptom_vec = [symptoms.get(col, 0) for col in ML_SYMPTOM_COLS]
+    x = np.array([symptom_vec + [inf_enc]])
+    proba = clf.predict_proba(x)[0]
+    prob_dict = {cls: float(probability) for cls, probability in zip(le_target.classes_, proba)}
+    ranked = rank_classifications(prob_dict)
+    top = ranked[0] if ranked else None
+
+    return {
+        "status": "Success" if top else "No Classification",
+        "predicted_disease": top["Class"] if top else None,
+        "confidence": top["Confidence"] if top else 0.0,
+        "classifications": ranked,
+        "prob_dict": prob_dict
+    }
+
+
+def predict_disease_combined(biomarker_thresholds, symptoms, infection_type):
+    rf2 = predict_disease_from_biomarkers(biomarker_thresholds, infection_type)
+    rf4 = predict_disease_from_symptoms(symptoms, infection_type)
+
+    all_classes = sorted(
+        set(c["Class"] for c in rf2["classifications"]) |
+        set(c["Class"] for c in rf4["classifications"])
+    )
+
+    sources = []
+    if rf2["status"] == "Success":
+        sources.append({c["Class"]: c["Confidence"] / 100 for c in rf2["classifications"]})
+    if rf4["status"] == "Success":
+        sources.append({c["Class"]: c["Confidence"] / 100 for c in rf4["classifications"]})
+
+    if not sources:
+        return {
+            "status": "No Classification",
+            "predicted_disease": None,
+            "confidence": 0.0,
+            "classifications": [],
+            "rf2_result": rf2,
+            "rf4_result": rf4
+        }
+
+    normalized = geometric_mean_combine(sources, all_classes)
+    ranked = rank_classifications(normalized)
+    top = ranked[0] if ranked else None
+
+    return {
+        "status": "Success",
+        "predicted_disease": top["Class"] if top else None,
+        "confidence": top["Confidence"] if top else 0.0,
+        "classifications": ranked,
+        "rf2_result": rf2,
+        "rf4_result": rf4
+    }
+
+
+def run_full_ml_pipeline(biomarker_thresholds, symptoms):
+    stage1 = predict_infection_combined(biomarker_thresholds, symptoms)
+    infection_type = stage1.get("predicted_infection_type")
+
+    if infection_type is None:
+        return {
+            "infection_type_result": stage1,
+            "disease_result": None,
+            "final_infection_type": None,
+            "final_disease": None,
+            "infection_confidence": 0.0,
+            "disease_confidence": 0.0
+        }
+
+    stage2 = predict_disease_combined(biomarker_thresholds, symptoms, infection_type)
+
+    return {
+        "infection_type_result": stage1,
+        "disease_result": stage2,
+        "final_infection_type": infection_type,
+        "final_disease": stage2.get("predicted_disease"),
+        "infection_confidence": stage1["confidence"],
+        "disease_confidence": stage2.get("confidence", 0.0)
+    }
+
+
+def classifications_to_dataframe(classifications, class_label, top_n=None):
+    shown = classifications if top_n is None else classifications[:top_n]
+    return pd.DataFrame([
+        {
+            "Rank": item["Rank"],
+            class_label: infection_type_label(item["Class"]) if class_label == "Infection Type" else item["Class"],
+            "Confidence (%)": f"{item['Confidence']:.2f}",
+            "Status": status_label(item["Rank"], item["Confidence"])
+        }
+        for item in shown
+    ])
+
+
+def render_classification_table(classifications, class_label, top_n=None):
+    if not classifications:
+        st.warning("No classification available.")
+        return
+
+    table_df = classifications_to_dataframe(classifications, class_label, top_n=top_n)
+    st.dataframe(table_df, hide_index=True, use_container_width=True)
+
+    if len(classifications) >= 2:
+        top_conf = classifications[0]["Confidence"]
+        second_conf = classifications[1]["Confidence"]
+        if abs(top_conf - second_conf) < 10:
+            st.warning("⚠️ Close confidence scores detected. This may indicate conflicting evidence or co-infection.")
+
+
+def render_individual_biomarker_probabilities(individual_results, class_label, top_n=3):
+    if not individual_results:
+        st.info("No individual biomarker results available.")
+        return
+
+    for biomarker, probabilities in individual_results.items():
+        ranked = rank_classifications(probabilities)
+        st.markdown(f"**{biomarker}**")
+        render_classification_table(ranked, class_label, top_n=top_n)
+
+
+def active_ml_symptom_labels(symptoms):
+    return [
+        ML_SYMPTOM_LABELS.get(col, col.replace("\n", " ").strip())
+        for col, value in symptoms.items()
+        if value
+    ]
+
+
+def render_ml_symptom_input(page_prefix=""):
+    current_symptoms = st.session_state.get("rf_symptoms", {col: 0 for col in ML_SYMPTOM_COLS})
+    selected_symptoms = {}
+
+    for group_name, symptom_cols in ML_SYMPTOM_GROUPS:
+        with st.expander(f"{group_name} ({len(symptom_cols)})", expanded=True):
+            for row_start in range(0, len(symptom_cols), 4):
+                cols = st.columns(4)
+                for col_idx, symptom_col in enumerate(symptom_cols[row_start:row_start + 4]):
+                    label = ML_SYMPTOM_LABELS.get(symptom_col, symptom_col.replace("\n", " ").strip())
+                    symptom_idx = ML_SYMPTOM_COLS.index(symptom_col)
+                    with cols[col_idx]:
+                        selected_symptoms[symptom_col] = 1 if st.checkbox(
+                            label,
+                            value=bool(current_symptoms.get(symptom_col, 0)),
+                            key=f"{page_prefix}symptom_{st.session_state.rf_input_counter}_{symptom_idx}"
+                        ) else 0
+
+    for symptom_col in ML_SYMPTOM_COLS:
+        selected_symptoms.setdefault(symptom_col, 0)
+
+    if selected_symptoms != current_symptoms:
+        st.session_state.rf_submitted = False
+
+    st.session_state.rf_symptoms = selected_symptoms
+    active_count = sum(selected_symptoms.values())
+    st.caption(f"Selected symptoms: {active_count}")
 
 
 def render_rf_biomarker_input(page_prefix=""):
     col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
 
     with col1:
-        available_biomarkers = [b for b in RF_BIOMARKERS if b not in st.session_state.rf_biomarker_thresholds]
+        available_biomarkers = [b for b in biomarkers if b not in st.session_state.rf_biomarker_thresholds]
         selected_biomarker = st.selectbox(
             "Select Biomarker",
             [""] + available_biomarkers,
@@ -864,10 +1318,10 @@ if st.session_state.current_page == "Home":
     with col2:
         st.markdown("#### 🌲 Machine Learning Approach")
         st.markdown("""
-        Uses a trained Random Forest model to predict infections based on:
-        - CRP, IL6, and PCT biomarkers
-        - Model probability scores
-        - Multi-biomarker probability fusion
+        Uses staged Random Forest models to combine:
+        - Biomarker-based infection type prediction
+        - Symptom-based infection type prediction
+        - Common disease name prediction
         """)
         if st.button("Go to Machine Learning Approach →", use_container_width=True, type="primary"):
             st.session_state.current_page = "Machine Learning Approach"
@@ -1141,155 +1595,183 @@ elif st.session_state.current_page == "Machine Learning Approach":
     display_added_rf_biomarkers("rf_")
 
     st.markdown("---")
-
-    if st.session_state.rf_biomarker_thresholds:
-        col_btn1, col_btn2 = st.columns([2, 1])
-
-        with col_btn1:
-            classify_button = st.button(
-                "🔬 Classify with Random Forest",
-                type="primary",
-                use_container_width=True,
-                key="rf_classify_btn"
-            )
-
-        with col_btn2:
-            if st.button("🔄 New Classification", use_container_width=True, key="rf_new_btn"):
-                st.session_state.rf_biomarker_thresholds = {}
-                st.session_state.rf_submitted = False
-                st.session_state.rf_individual_results = {}
-                st.session_state.rf_combined_result = None
-                st.session_state.rf_input_counter += 1
-                st.rerun()
-
-        if classify_button:
-            individual_results = {}
-
-            for bio_key in list(st.session_state.rf_biomarker_thresholds.keys()):
-                bio_data = st.session_state.rf_biomarker_thresholds[bio_key]
-                biomarker = bio_data['biomarker']
-                unit = bio_data['unit']
-
-                if biomarker not in RF_BIOMARKERS:
-                    continue
-
-                result = classify_infection_rf_single(
-                    biomarker,
-                    bio_data['value'],
-                    unit,
-                    rf_model,
-                    rf_feature_cols,
-                    rf_le
-                )
-                individual_results[biomarker] = result
-
-            combined_result = classify_infection_rf_combined(
-                st.session_state.rf_biomarker_thresholds,
-                rf_model,
-                rf_feature_cols,
-                rf_le,
-                verbose=False
-            )
-
-            st.session_state.rf_individual_results = individual_results
-            st.session_state.rf_combined_result = combined_result
-            st.session_state.rf_submitted = True
-            st.rerun()
-
-        if st.session_state.rf_submitted:
-            st.subheader("🔍 Individual Biomarker Results")
-
-            biomarker_list = list(st.session_state.rf_individual_results.keys())
-
-            if biomarker_list:
-                for idx in range(0, len(biomarker_list), 2):
-                    cols = st.columns(2)
-
-                    for col_idx, col in enumerate(cols):
-                        biomarker_idx = idx + col_idx
-                        if biomarker_idx < len(biomarker_list):
-                            biomarker = biomarker_list[biomarker_idx]
-                            result = st.session_state.rf_individual_results[biomarker]
-
-                            with col:
-                                with st.container(border=True):
-                                    st.markdown(f"### {biomarker}")
-                                    st.markdown(f"**Lab reading:** {result['Threshold']} {result['Unit']} ({result['Threshold_ng_ml']:.4f} ng/mL)")
-                                    st.markdown(f"**Method:** {result['Classification_Method']}")
-                                    st.success(f"**Prediction:** {result['Predicted_Infection']} ({result['Confidence']:.2f}% confidence)")
-
-                                    for i, match in enumerate(result['Classifications'], 1):
-                                        st.markdown(f"{i}. **{match['Infection']}**: {match['Confidence']:.2f}%")
-
-                                    fig = plot_rf_probabilities(
-                                        result["Probabilities"],
-                                        f"{biomarker} Random Forest Probabilities"
-                                    )
-                                    st.pyplot(fig, clear_figure=True)
-
-            st.markdown("---")
-            st.subheader("🎯 Combined Multi-Biomarker Classification")
-
-            combined_result = st.session_state.rf_combined_result
-
-            if combined_result and combined_result['Status'] == 'Success':
-                col1, col2 = st.columns([1, 2])
-
-                with col1:
-                    st.markdown("#### 📋 Summary")
-                    st.markdown(f"**Biomarkers Used:** {len(combined_result['Biomarkers_Used'])} / {combined_result['Total_Biomarkers']}")
-                    st.markdown("**Method:** Random Forest Combined")
-                    st.markdown("**Fusion:** Geometric Mean")
-
-                with col2:
-                    st.markdown("#### Final Classification Results")
-
-                    results_data = []
-                    for classification in combined_result['Classifications']:
-                        rank = classification['Rank']
-                        infection = classification['Infection']
-                        confidence = classification['Confidence']
-
-                        if rank == 1:
-                            status = "⭐ MOST LIKELY"
-                        elif confidence > 10:
-                            status = "✓ Possible"
-                        else:
-                            status = "○ Unlikely"
-
-                        results_data.append({
-                            'Rank': rank,
-                            'Infection': infection,
-                            'Confidence (%)': f"{confidence:.2f}",
-                            'Status': status
-                        })
-
-                    results_df = pd.DataFrame(results_data)
-                    st.dataframe(results_df, hide_index=True, use_container_width=True)
-
-                if combined_result['Classifications']:
-                    top_infection = combined_result['Classifications'][0]['Infection']
-                    top_confidence = combined_result['Classifications'][0]['Confidence']
-                    st.success(f"### 🎯 Predicted Infection: **{top_infection}** ({top_confidence:.2f}% confidence)")
-
-                    if len(combined_result['Classifications']) >= 2:
-                        second_conf = combined_result['Classifications'][1]['Confidence']
-                        if abs(top_confidence - second_conf) < 10:
-                            st.warning("⚠️ Close confidence scores detected. This may indicate conflicting biomarker evidence or uncertainty.")
-
-                fig = plot_rf_probabilities(
-                    {c['Infection']: c['Confidence'] for c in combined_result['Classifications']},
-                    "Combined Random Forest Probabilities"
-                )
-                st.pyplot(fig, clear_figure=True)
-            else:
-                st.error("❌ Could not perform Random Forest classification. Please check your inputs.")
-    else:
-        st.info("👆 Please add at least one biomarker to begin classification.")
+    st.subheader("Select Symptoms")
+    render_ml_symptom_input("rf_")
 
     st.markdown("---")
-    st.markdown("*Powered by ASU*")
-    
-    
+    col_btn1, col_btn2 = st.columns([2, 1])
+
+    with col_btn1:
+        classify_button = st.button(
+            "🔬 Run Machine Learning Pipeline",
+            type="primary",
+            use_container_width=True,
+            key="rf_classify_btn",
+            disabled=not st.session_state.rf_biomarker_thresholds
+        )
+
+    with col_btn2:
+        if st.button("🔄 New Classification", use_container_width=True, key="rf_new_btn"):
+            st.session_state.rf_biomarker_thresholds = {}
+            st.session_state.rf_submitted = False
+            st.session_state.rf_individual_results = {}
+            st.session_state.rf_combined_result = None
+            st.session_state.rf_pipeline_result = None
+            st.session_state.rf_symptoms = {col: 0 for col in ML_SYMPTOM_COLS}
+            st.session_state.rf_input_counter += 1
+            st.rerun()
+
+    if not st.session_state.rf_biomarker_thresholds:
+        st.info("👆 Please add at least one biomarker to begin classification.")
+
+    if classify_button:
+        ml_biomarker_thresholds = {
+            bio_data["biomarker"]: bio_data["value_ng_ml"]
+            for bio_data in st.session_state.rf_biomarker_thresholds.values()
+        }
+
+        try:
+            st.session_state.rf_pipeline_result = run_full_ml_pipeline(
+                ml_biomarker_thresholds,
+                st.session_state.rf_symptoms
+            )
+            st.session_state.rf_submitted = True
+            st.rerun()
+        except FileNotFoundError as e:
+            st.session_state.rf_submitted = False
+            st.session_state.rf_pipeline_result = None
+            st.error(f"❌ Missing model file: {os.path.basename(str(e).strip())}")
+        except Exception as e:
+            st.session_state.rf_submitted = False
+            st.session_state.rf_pipeline_result = None
+            st.error(f"❌ Could not run the machine learning pipeline: {e}")
+
+    if st.session_state.rf_submitted and st.session_state.rf_pipeline_result:
+        pipeline_result = st.session_state.rf_pipeline_result
+        infection_result = pipeline_result["infection_type_result"]
+        rf1_result = infection_result.get("rf1_result", {})
+        rf3_result = infection_result.get("rf3_result", {})
+        symptoms_selected = active_ml_symptom_labels(st.session_state.rf_symptoms)
+
+        st.markdown("---")
+
+        with st.expander("Infection Type from Biomarkers", expanded=False):
+            if rf1_result.get("status") == "Success":
+                st.success(
+                    f"Prediction: **{infection_type_label(rf1_result['predicted_infection_type'])}** "
+                    f"({rf1_result['confidence']:.2f}% confidence)"
+                )
+            else:
+                st.warning("No biomarker-based infection type classification available.")
+
+            skipped = rf1_result.get("skipped_biomarkers", [])
+            if skipped:
+                st.warning(f"Skipped biomarkers: {', '.join(skipped)}")
+
+            st.markdown("#### Ranked Infection Types")
+            render_classification_table(rf1_result.get("classifications", []), "Infection Type")
+            st.markdown("#### Per-Biomarker Results")
+            render_individual_biomarker_probabilities(
+                rf1_result.get("individual_results", {}),
+                "Infection Type",
+                top_n=3
+            )
+
+        with st.expander("Infection Type from Symptoms", expanded=False):
+            if symptoms_selected:
+                st.markdown("**Active symptoms:** " + ", ".join(symptoms_selected))
+            else:
+                st.info("No symptoms selected.")
+
+            if rf3_result.get("status") == "Success":
+                st.success(
+                    f"Prediction: **{infection_type_label(rf3_result['predicted_infection_type'])}** "
+                    f"({rf3_result['confidence']:.2f}% confidence)"
+                )
+            else:
+                st.warning("No symptom-based infection type classification available.")
+
+            render_classification_table(rf3_result.get("classifications", []), "Infection Type")
+
+        st.subheader("Combined Prediction for Infection Type")
+        with st.container(border=True):
+            if infection_result.get("status") == "Success":
+                st.success(
+                    f"### {infection_type_label(infection_result['predicted_infection_type'])} "
+                    f"({infection_result['confidence']:.2f}% confidence)"
+                )
+                render_classification_table(infection_result.get("classifications", []), "Infection Type")
+            else:
+                st.error("Could not produce a combined infection type prediction.")
+
+        disease_result = pipeline_result.get("disease_result")
+
+        if disease_result:
+            rf2_result = disease_result.get("rf2_result", {})
+            rf4_result = disease_result.get("rf4_result", {})
+
+            with st.expander("Common Disease from Biomarkers + Infection Type", expanded=False):
+                if rf2_result.get("status") == "Success":
+                    st.success(
+                        f"Prediction: **{rf2_result['predicted_disease']}** "
+                        f"({rf2_result['confidence']:.2f}% confidence)"
+                    )
+                else:
+                    st.warning("No biomarker-based common disease classification available.")
+
+                skipped = rf2_result.get("skipped_biomarkers", [])
+                if skipped:
+                    st.warning(f"Skipped biomarkers: {', '.join(skipped)}")
+
+                st.markdown("#### Top Common Disease Names")
+                render_classification_table(
+                    rf2_result.get("classifications", []),
+                    "Common Disease Name",
+                    top_n=TOP_N_DISEASE_PRINT
+                )
+                st.markdown("#### Per-Biomarker Results")
+                render_individual_biomarker_probabilities(
+                    rf2_result.get("individual_results", {}),
+                    "Common Disease Name",
+                    top_n=TOP_N_DISEASE_PRINT
+                )
+
+            with st.expander("Common Disease from Symptoms + Infection Type", expanded=False):
+                if symptoms_selected:
+                    st.markdown("**Active symptoms:** " + ", ".join(symptoms_selected))
+                else:
+                    st.info("No symptoms selected.")
+
+                if rf4_result.get("status") == "Success":
+                    st.success(
+                        f"Prediction: **{rf4_result['predicted_disease']}** "
+                        f"({rf4_result['confidence']:.2f}% confidence)"
+                    )
+                else:
+                    st.warning("No symptom-based common disease classification available.")
+
+                render_classification_table(
+                    rf4_result.get("classifications", []),
+                    "Common Disease Name",
+                    top_n=TOP_N_DISEASE_PRINT
+                )
+
+            st.subheader("Combined Prediction for Common Disease Name")
+            with st.container(border=True):
+                if disease_result.get("status") == "Success":
+                    st.success(
+                        f"### {disease_result['predicted_disease']} "
+                        f"({disease_result['confidence']:.2f}% confidence)"
+                    )
+                    render_classification_table(
+                        disease_result.get("classifications", []),
+                        "Common Disease Name",
+                        top_n=TOP_N_DISEASE_PRINT
+                    )
+                else:
+                    st.error("Could not produce a combined common disease prediction.")
+        else:
+            st.error("Stage 1 produced no infection type, so common disease prediction was not run.")
+
     st.markdown("---")
     st.markdown("*Powered by ASU*")
