@@ -355,32 +355,27 @@ def plot_classification_ranges(biomarker, threshold_value, stats_dict, classific
     infection_colors = dict(zip(infections, colors))
     matched = [m['Infection'] for m in classification_result['Matches'] if m['Infection'] in infections]
 
-    fig, axes = plt.subplots(2, 1, figsize=(8, 10), constrained_layout=True)
+    fig, ax = plt.subplots(figsize=(8, 5), constrained_layout=True)
 
-    for ax, mode in zip(axes, ['Mean ± Std', 'Min-Max']):
-        for i, row in stats_df.iterrows():
-            inf = row['Infection']
-            color = infection_colors[inf]
-            alpha = 0.9 if inf in matched else 0.4
-            lw = 5 if inf in matched else 3
+    for i, row in stats_df.iterrows():
+        inf = row['Infection']
+        color = infection_colors[inf]
+        alpha = 0.9 if inf in matched else 0.4
+        lw = 5 if inf in matched else 3
+        low, high = row['Mean - Std'], row['Mean + Std']
 
-            if mode == 'Mean ± Std':
-                low, high = row['Mean - Std'], row['Mean + Std']
-            else:
-                low, high = row['Min'], row['Max']
+        ax.plot([low, high], [i, i], color=color, linewidth=lw, alpha=alpha)
+        ax.scatter([row['Mean']], [i], color=color, edgecolors='black', s=200, alpha=alpha)
+        
+        label_text = f"{inf} (n={int(row['Count'])})"
+        ax.text(low - (high-low)*0.05, i, label_text, ha='right', va='center', fontsize=9)
 
-            ax.plot([low, high], [i, i], color=color, linewidth=lw, alpha=alpha)
-            ax.scatter([row['Mean']], [i], color=color, edgecolors='black', s=200, alpha=alpha)
-            
-            label_text = f"{inf} (n={int(row['Count'])})"
-            ax.text(low - (high-low)*0.05, i, label_text, ha='right', va='center', fontsize=9)
-
-        ax.axvline(threshold_value, linestyle='--', linewidth=2, color='red', label=f'Lab reading: {threshold_value}')
-        ax.set_title(f"{mode} Range", fontsize=11, fontweight='bold')
-        ax.set_xlabel('Lab reading (ng/mL)', fontsize=10)
-        ax.set_yticks([])
-        ax.grid(True, axis='x', linestyle='--', alpha=0.3)
-        ax.legend(fontsize=8)
+    ax.axvline(threshold_value, linestyle='--', linewidth=2, color='red', label=f'Lab reading: {threshold_value}')
+    ax.set_title("Mean ± Std Range", fontsize=11, fontweight='bold')
+    ax.set_xlabel('Lab reading (ng/mL)', fontsize=10)
+    ax.set_yticks([])
+    ax.grid(True, axis='x', linestyle='--', alpha=0.3)
+    ax.legend(fontsize=8)
 
     fig.suptitle(f"{biomarker} Classification", fontsize=13, fontweight='bold')
     return fig
@@ -416,6 +411,15 @@ def get_llm_response(user_message, chat_history):
 
 if 'current_page' not in st.session_state:
     st.session_state.current_page = "Home"
+page_name_aliases = {
+    "Statistical": "Statistical Approach",
+    "LLM-Aided": "LLM-Based Approach",
+    "ML-Aided (RF)": "Machine Learning Approach"
+}
+st.session_state.current_page = page_name_aliases.get(
+    st.session_state.current_page,
+    st.session_state.current_page
+)
 if 'biomarker_thresholds' not in st.session_state:
     st.session_state.biomarker_thresholds = {}
 if 'input_counter' not in st.session_state:
@@ -477,19 +481,19 @@ with st.sidebar:
         st.session_state.current_page = "Home"
         st.rerun()
     
-    if st.button("📊 Statistical", use_container_width=True,
-                 type="primary" if st.session_state.current_page == "Statistical" else "secondary"):
-        st.session_state.current_page = "Statistical"
+    if st.button("📊 Statistical Approach", use_container_width=True,
+                 type="primary" if st.session_state.current_page == "Statistical Approach" else "secondary"):
+        st.session_state.current_page = "Statistical Approach"
         st.rerun()
     
-    if st.button("🤖 LLM-Aided", use_container_width=True,
-                 type="primary" if st.session_state.current_page == "LLM-Aided" else "secondary"):
-        st.session_state.current_page = "LLM-Aided"
+    if st.button("🌲 Machine Learning Approach", use_container_width=True,
+                 type="primary" if st.session_state.current_page == "Machine Learning Approach" else "secondary"):
+        st.session_state.current_page = "Machine Learning Approach"
         st.rerun()
 
-    if st.button("🌲 ML-Aided (RF)", use_container_width=True,
-                 type="primary" if st.session_state.current_page == "ML-Aided (RF)" else "secondary"):
-        st.session_state.current_page = "ML-Aided (RF)"
+    if st.button("🤖 LLM-Based Approach", use_container_width=True,
+                 type="primary" if st.session_state.current_page == "LLM-Based Approach" else "secondary"):
+        st.session_state.current_page = "LLM-Based Approach"
         st.rerun()
 
 # ============================================================================
@@ -843,37 +847,49 @@ if st.session_state.current_page == "Home":
     
     st.markdown("### Choose Your Classification Method:")
     
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     
     with col1:
-        st.markdown("#### 📊 Statistical Classification")
+        st.markdown("#### 📊 Statistical Approach")
         st.markdown("""
         Uses Bayesian probability and statistical range analysis to predict infections based on:
         - Mean ± Standard Deviation ranges
         - Min-Max ranges
         - Multi-biomarker fusion with smoothing
         """)
-        if st.button("Go to Statistical Classification →", use_container_width=True, type="primary"):
-            st.session_state.current_page = "Statistical"
+        if st.button("Go to Statistical Approach →", use_container_width=True, type="primary"):
+            st.session_state.current_page = "Statistical Approach"
             st.rerun()
     
     with col2:
-        st.markdown("#### 🤖 LLM-Aided Classification")
+        st.markdown("#### 🌲 Machine Learning Approach")
+        st.markdown("""
+        Uses a trained Random Forest model to predict infections based on:
+        - CRP, IL6, and PCT biomarkers
+        - Model probability scores
+        - Multi-biomarker probability fusion
+        """)
+        if st.button("Go to Machine Learning Approach →", use_container_width=True, type="primary"):
+            st.session_state.current_page = "Machine Learning Approach"
+            st.rerun()
+
+    with col3:
+        st.markdown("#### 🤖 LLM-Based Approach")
         st.markdown("""
         Uses Large Language Models combined with statistical data to provide:
         - Natural language explanations
         - Context-aware predictions
         - Interactive assistance
         """)
-        if st.button("Go to LLM-Aided Classification →", use_container_width=True, type="primary"):
-            st.session_state.current_page = "LLM-Aided"
+        if st.button("Go to LLM-Based Approach →", use_container_width=True, type="primary"):
+            st.session_state.current_page = "LLM-Based Approach"
             st.rerun()
     
     st.markdown("---")
     st.markdown("*Powered by ASU*")
 
-elif st.session_state.current_page == "Statistical":
-    st.title("📊 Statistical Classification")
+elif st.session_state.current_page == "Statistical Approach":
+    st.title("📊 Statistical Approach")
     st.markdown("---")
     
     st.subheader("Add Biomarkers")
@@ -1014,8 +1030,8 @@ elif st.session_state.current_page == "Statistical":
     st.markdown("---")
     st.markdown("*Powered by ASU*")
 
-elif st.session_state.current_page == "LLM-Aided":
-    st.title("🤖 LLM-Aided Classification")
+elif st.session_state.current_page == "LLM-Based Approach":
+    st.title("🤖 LLM-Based Approach")
     st.markdown("---")
     
     if not st.session_state.llm_submitted:
@@ -1116,8 +1132,8 @@ elif st.session_state.current_page == "LLM-Aided":
             st.session_state.input_counter += 1
             st.rerun()
 
-elif st.session_state.current_page == "ML-Aided (RF)":
-    st.title("🌲 ML-Aided (Random Forest)")
+elif st.session_state.current_page == "Machine Learning Approach":
+    st.title("🌲 Machine Learning Approach")
     st.markdown("---")
 
     st.subheader("Add Biomarkers")
