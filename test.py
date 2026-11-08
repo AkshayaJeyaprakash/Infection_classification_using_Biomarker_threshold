@@ -7,6 +7,8 @@ import os
 import google.generativeai as genai
 from datetime import datetime
 import pandas as pd
+from model_config import DL_MODEL_FILE, ML_MODEL_FILE
+from uab_panel import MARKERS as UAB_MARKERS, predict_uab_panel
 
 # ============================================================================
 # UNIT CONVERSION
@@ -609,6 +611,16 @@ if 'rf_pipeline_result' not in st.session_state:
 if 'rf_symptoms' not in st.session_state:
     st.session_state.rf_symptoms = {col: 0 for col in ML_SYMPTOM_COLS}
 
+for panel_prefix in ("dl", "ml_panel"):
+    if f"{panel_prefix}_panel_inputs" not in st.session_state:
+        st.session_state[f"{panel_prefix}_panel_inputs"] = {
+            marker: {'value': None, 'unit': 'ng/mL'} for marker in UAB_MARKERS
+        }
+    if f"{panel_prefix}_input_counter" not in st.session_state:
+        st.session_state[f"{panel_prefix}_input_counter"] = 0
+    if f"{panel_prefix}_result" not in st.session_state:
+        st.session_state[f"{panel_prefix}_result"] = None
+
 # ============================================================================
 # PAGE CONFIGURATION
 # ============================================================================
@@ -636,6 +648,13 @@ with st.sidebar:
         st.session_state.rf_pipeline_result = None
         st.session_state.rf_symptoms = {col: 0 for col in ML_SYMPTOM_COLS}
         st.session_state.rf_input_counter = 0
+
+        for panel_prefix in ("dl", "ml_panel"):
+            st.session_state[f"{panel_prefix}_panel_inputs"] = {
+                marker: {'value': None, 'unit': 'ng/mL'} for marker in UAB_MARKERS
+            }
+            st.session_state[f"{panel_prefix}_input_counter"] += 1
+            st.session_state[f"{panel_prefix}_result"] = None
         
         st.rerun()
     
@@ -655,6 +674,11 @@ with st.sidebar:
     if st.button("🌲 Machine Learning Approach", use_container_width=True,
                  type="primary" if st.session_state.current_page == "Machine Learning Approach" else "secondary"):
         st.session_state.current_page = "Machine Learning Approach"
+        st.rerun()
+
+    if st.button("🧠 Deep Learning Approach", use_container_width=True,
+                 type="primary" if st.session_state.current_page == "Deep Learning Approach" else "secondary"):
+        st.session_state.current_page = "Deep Learning Approach"
         st.rerun()
 
     if st.button("🤖 LLM-Based Approach", use_container_width=True,
@@ -843,7 +867,7 @@ def rf1_single(biomarker, threshold, le_bio, le_unit, le_target, clf):
 
 
 def predict_infection_from_biomarkers(biomarker_thresholds):
-    clf = load_ml_artifact("rf1_infection_type.pkl")
+    clf = load_ml_artifact(ML_MODEL_FILE)
     le_bio = load_ml_artifact("rf1_le_biomarker.pkl")
     le_unit = load_ml_artifact("rf1_le_units.pkl")
     le_target = load_ml_artifact("rf1_le_infection_type.pkl")
@@ -1187,6 +1211,39 @@ def render_ml_symptom_input(page_prefix=""):
     st.caption(f"Selected symptoms: {active_count}")
 
 
+def render_uab_panel_input(page_prefix):
+    input_counter = st.session_state[f"{page_prefix}_input_counter"]
+    panel_inputs = {}
+    panel_ng_ml = {}
+    for marker in UAB_MARKERS:
+        current = st.session_state[f"{page_prefix}_panel_inputs"][marker]
+        value_col, unit_col = st.columns([3, 1])
+        with value_col:
+            value = st.number_input(
+                marker,
+                min_value=0.0,
+                value=current['value'],
+                step=0.01,
+                format="%.6f",
+                placeholder="Enter reading or leave blank",
+                key=f"{page_prefix}_value_{input_counter}_{marker}",
+            )
+        with unit_col:
+            unit = st.selectbox(
+                f"Unit for {marker}",
+                UNITS_LIST,
+                index=UNITS_LIST.index(current['unit']),
+                key=f"{page_prefix}_unit_{input_counter}_{marker}",
+            )
+        panel_inputs[marker] = {'value': value, 'unit': unit}
+        panel_ng_ml[marker] = np.nan if value is None else convert_to_ng_ml(value, unit)
+
+    if panel_inputs != st.session_state[f"{page_prefix}_panel_inputs"]:
+        st.session_state[f"{page_prefix}_result"] = None
+    st.session_state[f"{page_prefix}_panel_inputs"] = panel_inputs
+    return panel_ng_ml
+
+
 def render_rf_biomarker_input(page_prefix=""):
     col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
 
@@ -1288,302 +1345,75 @@ def display_added_rf_biomarkers(page_prefix=""):
 
         st.write(f"**Total Biomarkers:** {len(st.session_state.rf_biomarker_thresholds)}")
 
-# ============================================================================
-# PAGE ROUTING
-# ============================================================================
+def render_uab_panel_classifier(page_prefix, model_file, model_label):
+    if st.session_state.get(f"{page_prefix}_model_file") != model_file:
+        st.session_state[f"{page_prefix}_result"] = None
+        st.session_state[f"{page_prefix}_model_file"] = model_file
+    st.subheader("UAB Biomarker Panel")
+    st.write("Enter readings from one patient visit. Leave unmeasured biomarkers blank.")
+    panel_ng_ml = render_uab_panel_input(page_prefix)
+    provided_count = sum(
+        data['value'] is not None for data in st.session_state[f"{page_prefix}_panel_inputs"].values()
+    )
+    st.caption(f"Biomarkers entered: {provided_count} / {len(UAB_MARKERS)}")
 
-if st.session_state.current_page == "Home":
-    st.title("🧬 Biomarker Infection Classifier")
-    st.markdown("---")
-    
-    st.markdown("## Welcome!")
-    st.markdown("This tool helps classify infection types based on biomarker laboratory readings.")
-    
-    st.markdown("### Choose an approach based on how you want to analyze the case.")
-    
-    method_rows = [
-        {
-            "title": "📊 Statistical Approach",
-            "button": "Open Statistical Approach →",
-            "page": "Statistical Approach",
-            "description": "Compares biomarker readings against statistical ranges from the reference data. Best for transparent, range-based classification that shows which infections match each biomarker and how multiple biomarkers combine."
-        },
-        {
-            "title": "🌲 Machine Learning Approach",
-            "button": "Open Machine Learning Approach →",
-            "page": "Machine Learning Approach",
-            "description": "Runs the staged Random Forest pipeline using both biomarkers and selected symptoms. It first predicts the infection type, then uses that infection type to rank the most likely common disease names."
-        },
-        {
-            "title": "🤖 LLM-Based Approach",
-            "button": "Open LLM-Based Approach →",
-            "page": "LLM-Based Approach",
-            "description": "Uses biomarker readings and symptoms to generate a clinical-style explanation and interactive follow-up. Best for narrative interpretation, reasoning, and asking additional questions after entering the case details."
-        }
-    ]
-
-    for method in method_rows:
-        title_col, button_col = st.columns([3, 1])
-        with title_col:
-            st.markdown(f"#### {method['title']}")
-        with button_col:
-            if st.button(method["button"], use_container_width=True, type="primary", key=f"home_{method['page']}"):
-                st.session_state.current_page = method["page"]
-                st.rerun()
-        st.markdown(method["description"])
-        st.markdown("---")
-    
-    st.markdown("---")
-    st.markdown("*Powered by ASU*")
-
-elif st.session_state.current_page == "Statistical Approach":
-    st.title("📊 Statistical Approach")
-    st.markdown("---")
-    
-    st.subheader("Add Biomarkers")
-    render_biomarker_input("stat_")
-    display_added_biomarkers("stat_")
-    
-    st.markdown("---")
-    
-    if st.session_state.biomarker_thresholds:
-        if st.button("🔬 Classify Infection", type="primary", use_container_width=True):
-            
-            num_biomarkers = len(st.session_state.biomarker_thresholds)
-            
-            if num_biomarkers == 1:
-                bio_key = list(st.session_state.biomarker_thresholds.keys())[0]
-                bio_data = st.session_state.biomarker_thresholds[bio_key]
-                biomarker = bio_data['biomarker']
-                threshold_ng_ml = bio_data['value_ng_ml']
-                
-                st.subheader("🔍 Classification Results")
-                
-                result = classify_infection(biomarker, threshold_ng_ml, stats_dict, verbose=False)
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    with st.container(border=True):
-                        st.markdown(f"### 🧪 {biomarker}")
-                        st.markdown(f"**Lab reading:** {bio_data['value']} {bio_data['unit']} ({threshold_ng_ml:.4f} ng/mL)")
-                        st.markdown(f"**Classification Method:** {result['Classification_Method']}")
-                        
-                        if result['Total_Matches'] == 0:
-                            st.warning("⚠️ No matching infection found.")
-                        else:
-                            st.success(f"✅ Found {result['Total_Matches']} matching infection(s)")
-                            st.markdown("#### Infection Matches:")
-                            for i, match in enumerate(result['Matches'], 1):
-                                st.markdown(f"{i}. **{match['Infection']}** — {match['Confidence']:.2f}% confidence")
-                        st.markdown("---")
-                        st.markdown("#### Visualization")
-                        fig = plot_classification_ranges(biomarker, threshold_ng_ml, stats_dict, result)
-                        st.pyplot(fig, clear_figure=True)
-                
-                with col2:
-                    st.write("")
-            
-            else:
-                st.subheader("🔍 Individual Biomarker Results")
-                individual_results = {}
-                biomarker_list = list(st.session_state.biomarker_thresholds.keys())
-                
-                for idx in range(0, len(biomarker_list), 2):
-                    cols = st.columns(2)
-                    
-                    for col_idx, col in enumerate(cols):
-                        biomarker_idx = idx + col_idx
-                        if biomarker_idx < len(biomarker_list):
-                            bio_key = biomarker_list[biomarker_idx]
-                            bio_data = st.session_state.biomarker_thresholds[bio_key]
-                            biomarker = bio_data['biomarker']
-                            threshold_ng_ml = bio_data['value_ng_ml']
-                            
-                            with col:
-                                with st.container(border=True):
-                                    st.markdown(f"### {biomarker}")
-                                    st.markdown(f"**Lab reading:** {bio_data['value']} {bio_data['unit']} ({threshold_ng_ml:.4f} ng/mL)")
-                                    result = classify_infection(biomarker, threshold_ng_ml, stats_dict, verbose=False)
-                                    individual_results[biomarker] = result
-                                    st.markdown(f"**Method:** {result['Classification_Method']}")
-                                    
-                                    if result['Total_Matches'] == 0:
-                                        st.warning("No matches found")
-                                    else:
-                                        st.success(f"{result['Total_Matches']} match(es)")
-                                        for i, match in enumerate(result['Matches'][:4], 1):
-                                            st.markdown(f"{i}. **{match['Infection']}**: {match['Confidence']:.2f}%")
-                                    fig = plot_classification_ranges(biomarker, threshold_ng_ml, stats_dict, result)
-                                    st.pyplot(fig, clear_figure=True)
-                
-                st.markdown("---")
-                st.subheader("🎯 Combined Multi-Biomarker Classification")
-                
-                combined_result = classify_infection_bayesian_geometric_smoothed(
-                    st.session_state.biomarker_thresholds, 
-                    stats_dict, 
-                    verbose=False
-                )
-                
-                if combined_result and combined_result['Status'] == 'Success':
-                    col1, col2 = st.columns([1, 2])
-                    
-                    with col1:
-                        st.markdown("#### 📋 Summary")
-                        st.markdown(f"**Biomarkers Used:** {len(combined_result['Biomarkers_Used'])} / {combined_result['Total_Biomarkers']}")
-                        st.markdown(f"**Method:** Bayesian with Smoothing")
-                        st.markdown(f"**Min Probability:** {combined_result.get('Min_Probability', 'N/A')}")
-                    
-                    with col2:
-                        st.markdown("#### Final Classification Results")
-                        
-                        results_data = []
-                        for classification in combined_result['Classifications']:
-                            rank = classification['Rank']
-                            infection = classification['Infection']
-                            confidence = classification['Confidence']
-                            
-                            if rank == 1:
-                                status = "⭐ MOST LIKELY"
-                            elif confidence > 10:
-                                status = "✓ Possible"
-                            else:
-                                status = "○ Unlikely"
-                            
-                            results_data.append({
-                                'Rank': rank,
-                                'Infection': infection,
-                                'Confidence (%)': f"{confidence:.2f}",
-                                'Status': status
-                            })
-                        
-                        import pandas as pd
-                        results_df = pd.DataFrame(results_data)
-                        st.dataframe(results_df, hide_index=True, use_container_width=True)
-                    
-                    if combined_result['Classifications']:
-                        top_infection = combined_result['Classifications'][0]['Infection']
-                        top_confidence = combined_result['Classifications'][0]['Confidence']
-                        st.success(f"### 🎯 Predicted Infection: **{top_infection}** ({top_confidence:.2f}% confidence)")
-                        
-                        if len(combined_result['Classifications']) >= 2:
-                            second_conf = combined_result['Classifications'][1]['Confidence']
-                            if abs(top_confidence - second_conf) < 10:
-                                st.warning("⚠️ Close confidence scores detected. This may indicate conflicting biomarker evidence or co-infection.")
-                else:
-                    st.error("❌ Could not perform multi-biomarker classification. Please check your inputs.")
-    else:
-        st.info("👆 Please add at least one biomarker to begin classification.")
-    
-    st.markdown("---")
-    st.markdown("*Powered by ASU*")
-
-elif st.session_state.current_page == "LLM-Based Approach":
-    st.title("🤖 LLM-Based Approach")
-    st.markdown("---")
-    
-    if not st.session_state.llm_submitted:
-        st.subheader("Add Biomarkers")
-        render_biomarker_input("llm_")
-        display_added_biomarkers("llm_")
-        
-        st.markdown("---")
-        st.subheader("Select Symptoms")
-        
-        selected_symptoms = st.multiselect(
-            "Choose symptoms from the list:",
-            SYMPTOMS_LIST,
-            default=st.session_state.selected_symptoms,
-            key="symptoms_multiselect"
+    classify_col, reset_col = st.columns([2, 1])
+    with classify_col:
+        classify_panel = st.button(
+            f"🔬 Run {model_label} Model",
+            type="primary",
+            use_container_width=True,
+            disabled=provided_count == 0,
+            key=f"{page_prefix}_classify_btn",
         )
-        st.session_state.selected_symptoms = selected_symptoms
-        
-        other_symptoms_input = st.text_area(
-            "Other symptoms (comma-separated):",
-            value=st.session_state.other_symptoms,
-            placeholder="e.g., Diarrhea, Rash, Difficulty breathing",
-            key="other_symptoms_input"
+    with reset_col:
+        if st.button("🔄 New Classification", use_container_width=True, key=f"{page_prefix}_new_btn"):
+            st.session_state[f"{page_prefix}_panel_inputs"] = {
+                marker: {'value': None, 'unit': 'ng/mL'} for marker in UAB_MARKERS
+            }
+            st.session_state[f"{page_prefix}_result"] = None
+            st.session_state[f"{page_prefix}_input_counter"] += 1
+            st.rerun()
+
+    if provided_count == 0:
+        st.info("Enter at least one biomarker reading to begin classification.")
+    elif provided_count < len(UAB_MARKERS):
+        st.info("Unmeasured biomarkers will use the model's saved training medians.")
+
+    if classify_panel:
+        st.session_state[f"{page_prefix}_result"] = None
+        try:
+            with st.spinner("Analyzing the biomarker panel..."):
+                artifact = load_ml_artifact(model_file)
+                st.session_state[f"{page_prefix}_result"] = predict_uab_panel(panel_ng_ml, artifact)
+        except FileNotFoundError:
+            st.error(f"The model file {model_file} could not be found.")
+        except Exception as e:
+            st.error(f"Could not run the {model_label} model: {e}")
+
+    if st.session_state[f"{page_prefix}_result"]:
+        result = st.session_state[f"{page_prefix}_result"]
+        st.markdown("---")
+        st.subheader("Predicted Infection Type")
+        st.success(
+            f"### {infection_type_label(result['predicted_infection_type'])} "
+            f"({result['confidence']:.2f}% model probability)"
         )
-        st.session_state.other_symptoms = other_symptoms_input
-        
-        st.markdown("---")
-        
-        if st.session_state.biomarker_thresholds:
-            if st.button("🔬 Classify", type="primary", use_container_width=True, key="llm_classify_btn"):
-                st.session_state.llm_submitted = True
-                
-                biomarker_text = "\n".join([
-                    f"{data['biomarker']}: {data['value']} {data['unit']}" 
-                    for data in st.session_state.biomarker_thresholds.values()
-                ])
-                
-                all_symptoms = list(st.session_state.selected_symptoms)
-                if st.session_state.other_symptoms.strip():
-                    other_symp_list = [s.strip() for s in st.session_state.other_symptoms.split(',') if s.strip()]
-                    all_symptoms.extend(other_symp_list)
-                
-                symptoms_text = ", ".join(all_symptoms) if all_symptoms else "None reported"
-                
-                user_message = f"<thresholds>\n{biomarker_text}\n</thresholds>\n\nSymptoms: {symptoms_text}"
-                
-                st.session_state.llm_chat_history.append({
-                    'role': 'user',
-                    'content': user_message
-                })
-                
-                st.rerun()
-        else:
-            st.info("👆 Please add at least one biomarker to begin classification.")
-    
-    else:
-        st.subheader("💬 Classification Analysis")
-        
-        for idx, message in enumerate(st.session_state.llm_chat_history):
-            if message['role'] == 'user':
-                with st.chat_message("user"):
-                    st.markdown(f"```\n{message['content']}\n```")
-            else:
-                with st.chat_message("assistant"):
-                    st.markdown(message['content'])
-        
-        if st.session_state.llm_chat_history and st.session_state.llm_chat_history[-1]['role'] == 'user':
-            with st.chat_message("assistant"):
-                with st.spinner("🔄 Processing your request..."):
-                    response = get_llm_response(
-                        st.session_state.llm_chat_history[-1]['content'],
-                        st.session_state.llm_chat_history[:-1]
-                    )
-                    st.markdown(response)
-            
-            st.session_state.llm_chat_history.append({
-                'role': 'assistant',
-                'content': response
-            })
-            st.rerun()
-        
-        user_input = st.chat_input("Ask a follow-up question...")
-        
-        if user_input:
-            st.session_state.llm_chat_history.append({
-                'role': 'user',
-                'content': user_input
-            })
-            st.rerun()
-        
-        st.markdown("---")
-        if st.button("🔄 New Classification", use_container_width=True):
-            st.session_state.llm_submitted = False
-            st.session_state.llm_chat_history = []
-            st.session_state.biomarker_thresholds = {}
-            st.session_state.selected_symptoms = []
-            st.session_state.other_symptoms = ""
-            st.session_state.input_counter += 1
-            st.rerun()
+        st.markdown("#### CORE-5 Class Probabilities")
+        probability_table = pd.DataFrame([
+            {
+                "Rank": item['Rank'],
+                "Infection Type": infection_type_label(item['Class']),
+                "Probability (%)": round(item['Confidence'], 2),
+            }
+            for item in result['classifications']
+        ])
+        st.dataframe(probability_table, hide_index=True, use_container_width=True)
+        if result['missing_biomarkers']:
+            st.caption("Filled from training medians: " + ", ".join(result['missing_biomarkers']))
 
-elif st.session_state.current_page == "Machine Learning Approach":
-    st.title("🌲 Machine Learning Approach")
-    st.markdown("---")
 
+def render_legacy_ml_page():
     st.subheader("Add Biomarkers")
     render_rf_biomarker_input("rf_")
     display_added_rf_biomarkers("rf_")
@@ -1769,3 +1599,340 @@ elif st.session_state.current_page == "Machine Learning Approach":
 
     st.markdown("---")
     st.markdown("*Powered by ASU*")
+
+
+# ============================================================================
+# PAGE ROUTING
+# ============================================================================
+
+if st.session_state.current_page == "Home":
+    st.title("🧬 Biomarker Infection Classifier")
+    st.markdown("---")
+
+    st.markdown("## Welcome!")
+    st.markdown("This tool helps classify infection types based on biomarker laboratory readings.")
+
+    st.markdown("### Choose an approach based on how you want to analyze the case.")
+
+    method_rows = [
+        {
+            "title": "📊 Statistical Approach",
+            "button": "Open Statistical Approach →",
+            "page": "Statistical Approach",
+            "description": "Compares biomarker readings against statistical ranges from the reference data. Best for transparent, range-based classification that shows which infections match each biomarker and how multiple biomarkers combine."
+        },
+        {
+            "title": "🌲 Machine Learning Approach",
+            "button": "Open Machine Learning Approach →",
+            "page": "Machine Learning Approach",
+            "description": "Predicts infection types with the configured Random Forest model using the supported biomarker panel or biomarker and symptom inputs."
+        },
+        {
+            "title": "🧠 Deep Learning Approach",
+            "button": "Open Deep Learning Approach →",
+            "page": "Deep Learning Approach",
+            "description": "Uses the seven-biomarker UAB panel to predict a CORE-5 infection category with the trained neural network. Shows the model probabilities for BR, BVR, C, N, and VR."
+        },
+        {
+            "title": "🤖 LLM-Based Approach",
+            "button": "Open LLM-Based Approach →",
+            "page": "LLM-Based Approach",
+            "description": "Uses biomarker readings and symptoms to generate a clinical-style explanation and interactive follow-up. Best for narrative interpretation, reasoning, and asking additional questions after entering the case details."
+        }
+    ]
+
+    for method in method_rows:
+        title_col, button_col = st.columns([3, 1])
+        with title_col:
+            st.markdown(f"#### {method['title']}")
+        with button_col:
+            if st.button(method["button"], use_container_width=True, type="primary", key=f"home_{method['page']}"):
+                st.session_state.current_page = method["page"]
+                st.rerun()
+        st.markdown(method["description"])
+        st.markdown("---")
+
+    st.markdown("---")
+    st.markdown("*Powered by ASU*")
+
+elif st.session_state.current_page == "Statistical Approach":
+    st.title("📊 Statistical Approach")
+    st.markdown("---")
+
+    st.subheader("Add Biomarkers")
+    render_biomarker_input("stat_")
+    display_added_biomarkers("stat_")
+
+    st.markdown("---")
+
+    if st.session_state.biomarker_thresholds:
+        if st.button("🔬 Classify Infection", type="primary", use_container_width=True):
+
+            num_biomarkers = len(st.session_state.biomarker_thresholds)
+
+            if num_biomarkers == 1:
+                bio_key = list(st.session_state.biomarker_thresholds.keys())[0]
+                bio_data = st.session_state.biomarker_thresholds[bio_key]
+                biomarker = bio_data['biomarker']
+                threshold_ng_ml = bio_data['value_ng_ml']
+
+                st.subheader("🔍 Classification Results")
+
+                result = classify_infection(biomarker, threshold_ng_ml, stats_dict, verbose=False)
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    with st.container(border=True):
+                        st.markdown(f"### 🧪 {biomarker}")
+                        st.markdown(f"**Lab reading:** {bio_data['value']} {bio_data['unit']} ({threshold_ng_ml:.4f} ng/mL)")
+                        st.markdown(f"**Classification Method:** {result['Classification_Method']}")
+
+                        if result['Total_Matches'] == 0:
+                            st.warning("⚠️ No matching infection found.")
+                        else:
+                            st.success(f"✅ Found {result['Total_Matches']} matching infection(s)")
+                            st.markdown("#### Infection Matches:")
+                            for i, match in enumerate(result['Matches'], 1):
+                                st.markdown(f"{i}. **{match['Infection']}** — {match['Confidence']:.2f}% confidence")
+                        st.markdown("---")
+                        st.markdown("#### Visualization")
+                        fig = plot_classification_ranges(biomarker, threshold_ng_ml, stats_dict, result)
+                        st.pyplot(fig, clear_figure=True)
+
+                with col2:
+                    st.write("")
+
+            else:
+                st.subheader("🔍 Individual Biomarker Results")
+                individual_results = {}
+                biomarker_list = list(st.session_state.biomarker_thresholds.keys())
+
+                for idx in range(0, len(biomarker_list), 2):
+                    cols = st.columns(2)
+
+                    for col_idx, col in enumerate(cols):
+                        biomarker_idx = idx + col_idx
+                        if biomarker_idx < len(biomarker_list):
+                            bio_key = biomarker_list[biomarker_idx]
+                            bio_data = st.session_state.biomarker_thresholds[bio_key]
+                            biomarker = bio_data['biomarker']
+                            threshold_ng_ml = bio_data['value_ng_ml']
+
+                            with col:
+                                with st.container(border=True):
+                                    st.markdown(f"### {biomarker}")
+                                    st.markdown(f"**Lab reading:** {bio_data['value']} {bio_data['unit']} ({threshold_ng_ml:.4f} ng/mL)")
+                                    result = classify_infection(biomarker, threshold_ng_ml, stats_dict, verbose=False)
+                                    individual_results[biomarker] = result
+                                    st.markdown(f"**Method:** {result['Classification_Method']}")
+
+                                    if result['Total_Matches'] == 0:
+                                        st.warning("No matches found")
+                                    else:
+                                        st.success(f"{result['Total_Matches']} match(es)")
+                                        for i, match in enumerate(result['Matches'][:4], 1):
+                                            st.markdown(f"{i}. **{match['Infection']}**: {match['Confidence']:.2f}%")
+                                    fig = plot_classification_ranges(biomarker, threshold_ng_ml, stats_dict, result)
+                                    st.pyplot(fig, clear_figure=True)
+
+                st.markdown("---")
+                st.subheader("🎯 Combined Multi-Biomarker Classification")
+
+                combined_result = classify_infection_bayesian_geometric_smoothed(
+                    st.session_state.biomarker_thresholds,
+                    stats_dict,
+                    verbose=False
+                )
+
+                if combined_result and combined_result['Status'] == 'Success':
+                    col1, col2 = st.columns([1, 2])
+
+                    with col1:
+                        st.markdown("#### 📋 Summary")
+                        st.markdown(f"**Biomarkers Used:** {len(combined_result['Biomarkers_Used'])} / {combined_result['Total_Biomarkers']}")
+                        st.markdown(f"**Method:** Bayesian with Smoothing")
+                        st.markdown(f"**Min Probability:** {combined_result.get('Min_Probability', 'N/A')}")
+
+                    with col2:
+                        st.markdown("#### Final Classification Results")
+
+                        results_data = []
+                        for classification in combined_result['Classifications']:
+                            rank = classification['Rank']
+                            infection = classification['Infection']
+                            confidence = classification['Confidence']
+
+                            if rank == 1:
+                                status = "⭐ MOST LIKELY"
+                            elif confidence > 10:
+                                status = "✓ Possible"
+                            else:
+                                status = "○ Unlikely"
+
+                            results_data.append({
+                                'Rank': rank,
+                                'Infection': infection,
+                                'Confidence (%)': f"{confidence:.2f}",
+                                'Status': status
+                            })
+
+                        import pandas as pd
+                        results_df = pd.DataFrame(results_data)
+                        st.dataframe(results_df, hide_index=True, use_container_width=True)
+
+                    if combined_result['Classifications']:
+                        top_infection = combined_result['Classifications'][0]['Infection']
+                        top_confidence = combined_result['Classifications'][0]['Confidence']
+                        st.success(f"### 🎯 Predicted Infection: **{top_infection}** ({top_confidence:.2f}% confidence)")
+
+                        if len(combined_result['Classifications']) >= 2:
+                            second_conf = combined_result['Classifications'][1]['Confidence']
+                            if abs(top_confidence - second_conf) < 10:
+                                st.warning("⚠️ Close confidence scores detected. This may indicate conflicting biomarker evidence or co-infection.")
+                else:
+                    st.error("❌ Could not perform multi-biomarker classification. Please check your inputs.")
+    else:
+        st.info("👆 Please add at least one biomarker to begin classification.")
+
+    st.markdown("---")
+    st.markdown("*Powered by ASU*")
+
+elif st.session_state.current_page == "Deep Learning Approach":
+    st.title("🧠 Deep Learning Approach")
+    st.markdown("---")
+    render_uab_panel_classifier("dl", DL_MODEL_FILE, "Deep Learning")
+    st.markdown("---")
+    st.markdown("*Powered by ASU*")
+
+elif st.session_state.current_page == "LLM-Based Approach":
+    st.title("🤖 LLM-Based Approach")
+    st.markdown("---")
+
+    if not st.session_state.llm_submitted:
+        st.subheader("Add Biomarkers")
+        render_biomarker_input("llm_")
+        display_added_biomarkers("llm_")
+
+        st.markdown("---")
+        st.subheader("Select Symptoms")
+
+        selected_symptoms = st.multiselect(
+            "Choose symptoms from the list:",
+            SYMPTOMS_LIST,
+            default=st.session_state.selected_symptoms,
+            key="symptoms_multiselect"
+        )
+        st.session_state.selected_symptoms = selected_symptoms
+
+        other_symptoms_input = st.text_area(
+            "Other symptoms (comma-separated):",
+            value=st.session_state.other_symptoms,
+            placeholder="e.g., Diarrhea, Rash, Difficulty breathing",
+            key="other_symptoms_input"
+        )
+        st.session_state.other_symptoms = other_symptoms_input
+
+        st.markdown("---")
+
+        if st.session_state.biomarker_thresholds:
+            if st.button("🔬 Classify", type="primary", use_container_width=True, key="llm_classify_btn"):
+                st.session_state.llm_submitted = True
+
+                biomarker_text = "\n".join([
+                    f"{data['biomarker']}: {data['value']} {data['unit']}"
+                    for data in st.session_state.biomarker_thresholds.values()
+                ])
+
+                all_symptoms = list(st.session_state.selected_symptoms)
+                if st.session_state.other_symptoms.strip():
+                    other_symp_list = [s.strip() for s in st.session_state.other_symptoms.split(',') if s.strip()]
+                    all_symptoms.extend(other_symp_list)
+
+                symptoms_text = ", ".join(all_symptoms) if all_symptoms else "None reported"
+
+                user_message = f"<thresholds>\n{biomarker_text}\n</thresholds>\n\nSymptoms: {symptoms_text}"
+
+                st.session_state.llm_chat_history.append({
+                    'role': 'user',
+                    'content': user_message
+                })
+
+                st.rerun()
+        else:
+            st.info("👆 Please add at least one biomarker to begin classification.")
+
+    else:
+        st.subheader("💬 Classification Analysis")
+
+        for idx, message in enumerate(st.session_state.llm_chat_history):
+            if message['role'] == 'user':
+                with st.chat_message("user"):
+                    st.markdown(f"```\n{message['content']}\n```")
+            else:
+                with st.chat_message("assistant"):
+                    st.markdown(message['content'])
+
+        if st.session_state.llm_chat_history and st.session_state.llm_chat_history[-1]['role'] == 'user':
+            with st.chat_message("assistant"):
+                with st.spinner("🔄 Processing your request..."):
+                    response = get_llm_response(
+                        st.session_state.llm_chat_history[-1]['content'],
+                        st.session_state.llm_chat_history[:-1]
+                    )
+                    st.markdown(response)
+
+            st.session_state.llm_chat_history.append({
+                'role': 'assistant',
+                'content': response
+            })
+            st.rerun()
+
+        user_input = st.chat_input("Ask a follow-up question...")
+
+        if user_input:
+            st.session_state.llm_chat_history.append({
+                'role': 'user',
+                'content': user_input
+            })
+            st.rerun()
+
+        st.markdown("---")
+        if st.button("🔄 New Classification", use_container_width=True):
+            st.session_state.llm_submitted = False
+            st.session_state.llm_chat_history = []
+            st.session_state.biomarker_thresholds = {}
+            st.session_state.selected_symptoms = []
+            st.session_state.other_symptoms = ""
+            st.session_state.input_counter += 1
+            st.rerun()
+
+elif st.session_state.current_page == "Machine Learning Approach":
+    st.title("🌲 Machine Learning Approach")
+    st.markdown("---")
+    if st.session_state.get("active_ml_model_file") != ML_MODEL_FILE:
+        st.session_state.rf_submitted = False
+        st.session_state.rf_pipeline_result = None
+        st.session_state.ml_panel_result = None
+        st.session_state.active_ml_model_file = ML_MODEL_FILE
+
+    try:
+        selected_model = load_ml_artifact(ML_MODEL_FILE)
+        if (
+            isinstance(selected_model, dict)
+            and callable(getattr(selected_model.get("feature_engineer"), "transform", None))
+            and callable(getattr(selected_model.get("model"), "predict_proba", None))
+        ):
+            render_uab_panel_classifier("ml_panel", ML_MODEL_FILE, "Machine Learning")
+            st.markdown("---")
+            st.markdown("*Powered by ASU*")
+        elif (
+            callable(getattr(selected_model, "predict_proba", None))
+            and getattr(selected_model, "n_features_in_", None) == 3
+        ):
+            render_legacy_ml_page()
+        else:
+            st.error("The selected ML file must contain a UAB panel model or an RF1-compatible classifier.")
+    except FileNotFoundError:
+        st.error(f"The Machine Learning model file {ML_MODEL_FILE} could not be found.")
+    except Exception as e:
+        st.error(f"Could not load the Machine Learning model: {e}")
